@@ -56,6 +56,15 @@ mode: the stock driver, loaded for its display, runs its own tracker for it and 
 about 11 s after each LH1 command ("SwSyncDetect Restart ... enabling Sync on Beam"), re-bootstrapping
 its own universe as it does. Using 1.0 light on the headset would need that command kept from the headset.
 
+**1.0-only devices** (the original Vive headset, Vive wands, the 2017 Vive Tracker) can't use any of this:
+they have no LH2 mode and see only 1.0 stations, so there are no beam words to learn a rotor from. Told to
+go to LH2 mode they keep sending LH1 pulses, where a device that can stops within about 30 ms. A device
+still doing that 8 s on (past a re-send), having never sent a beam word, is left out
+(`runtime::LooksLh1Only`): the usual light-mode choice, no sorting, no weighting. A beam word from it
+later lets it back in. With 2.0 stations lit, their light may reach such a device's LH1 path as noise,
+as it does an Index controller's in LH1 mode without sorting (it never tracked): untested, as no such
+device was at hand.
+
 **How long a visit holds.** Between visits the line is carried forward, and 1 us of timing error turns every
 angle from that station by 0.31 mrad, about 1 mm at 3 m. A line fitted on one visit, against the next
 visit's, by time since (four sessions, one device at a time):
@@ -141,6 +150,8 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
 
 ## Limits and open items
 
+* 1.0-only devices (original Vive headset, Vive wands, 2017 Vive Tracker) get nothing from this, and are
+  left out once they show themselves (above); the guard is untested on such hardware.
 * Trackers, several 1.0 stations, sync cables and lhbs multi-station alongside 2.0 stations: untested.
 * Hard swings from a cold start are less reliable than in LH2 mode (above).
 * A rotor needs a visit with its station in view before its hits can be used.

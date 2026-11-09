@@ -248,6 +248,8 @@ class SessionImpl final : public Session, public InputSinkBase {
     // 1.0 and 2.0 stations together: see UpdateMixedLight.
     double lastPulse = -1e300, lastBeam = -1e300, lastTracked = -1e300, modeSent = -1e300, nextLightCheck = 0;
     double lastBeamDeviceTime = 0, lastPulseDeviceTime = 0;
+    bool everLh2 = false;  // has sent a beam word this session
+    bool lh1Only = false;  // can't do LH2 mode (runtime::LooksLh1Only): left out of 1.0 + 2.0
     // The scout (UpdateScout): per channel, the line it follows and whose periods it follows.
     struct Scouted {
       int epoch = -1;  // the sorter's line for the rotor
@@ -741,7 +743,7 @@ void SessionImpl::OnImu(const DeviceId& id, const ImuSample& sample) {
 void SessionImpl::UpdateLightMode(const DeviceId& id, Device& d) {
   constexpr double kDark = 2.5, kResend = 5.0;
   if (!usb_ || !d.attached) return;
-  if (mixedActive_) {
+  if (mixedActive_ && !d.lh1Only) {
     UpdateMixedLight(id, d);
     return;
   }
@@ -802,6 +804,16 @@ void SessionImpl::UpdateMixedLight(const DeviceId& id, Device& d) {
   view.tracking = out.state == TrackingState::Tracking;
   view.lost = now_ - d.lastTracked;
   view.calm = !out.valid || (out.velocity.norm() < kCalmSpeed && out.angularVelocity.norm() < kCalmTurn);
+  view.lh1Pulses = now_ - d.lastPulse < 0.5;
+  view.everLh2 = d.everLh2;
+  if (runtime::LooksLh1Only(view)) {
+    d.lh1Only = true;
+    StartMixedLight(d);
+    d.lightMode = -1;
+    Emit(SessionEventType::Log, id, id + ": still sending 1.0 light in LH2 mode, and never 2.0 light: a 1.0-only device, "
+                                         "left on the usual light mode", LogLevel::Info);
+    return;
+  }
   const bool scouted = view.mode == 0 && ScoutCovers(d);
   const auto step = runtime::ChooseMixedLight(view, scouted ? runtime::kScoutedVisitEvery : runtime::kVisitEvery);
   if (step.mode < 0) return;
@@ -924,6 +936,11 @@ void SessionImpl::OnLh2BeamWord(const DeviceId& id, const Lh2BeamWord& word) {
   found->second.lastGoodLight = now_;
   found->second.lastBeam = now_;
   found->second.lastBeamDeviceTime = word.time;
+  found->second.everLh2 = true;
+  if (found->second.lh1Only) {  // it can do LH2 mode after all
+    found->second.lh1Only = false;
+    StartMixedLight(found->second);
+  }
   found->second.tracker->OnLh2BeamWord(word);
 }
 
@@ -1439,9 +1456,10 @@ void SessionImpl::SetOutputTuning(double positionSmoothing, double rotationSmoot
 // kinds a fresh choice of light mode, since it knows no rotors yet.
 void SessionImpl::StartMixedLight(Device& d) {
   if (!d.tracker) return;
-  d.tracker->Source().SetSorting(mixedActive_);
-  d.tracker->SetMixedLightScatter(mixedActive_ ? runtime::kSortedHitScatter : 0, mixedActive_ ? runtime::kLh1HitScatter : 0);
-  if (mixedActive_) d.lightMode = -1;
+  const bool mixing = mixedActive_ && !d.lh1Only;
+  d.tracker->Source().SetSorting(mixing);
+  d.tracker->SetMixedLightScatter(mixing ? runtime::kSortedHitScatter : 0, mixing ? runtime::kLh1HitScatter : 0);
+  if (mixing) d.lightMode = -1;
 }
 
 // Both kinds together only where there's a 2.0 station to sort: one in the room in use, or seen this

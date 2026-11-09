@@ -11,6 +11,11 @@
 // A device can stay in LH2 mode throughout, by kind (MixedLightOptions, from the SteamVR
 // settings page). The headset always does.
 //
+// A first-generation device (the original Vive headset, Vive wands, the 2017 Vive Tracker) has no
+// LH2 mode and sees only 1.0 stations, so none of this is for it. It doesn't say so, but it gives
+// itself away: told to go to LH2 mode it keeps sending LH1 pulses and never a beam word, where a
+// device that can stops within about 30 ms. Then it's left out (LooksLh1Only).
+//
 // Live only: a replay's modes are in its recording.
 #pragma once
 
@@ -45,6 +50,8 @@ struct MixedLightView {
   bool tracking = false;   // has a pose from light right now
   double lost = 0;         // s since it last did
   bool calm = false;       // slow enough to go half a second without light
+  bool lh1Pulses = false;  // LH1 pulses within the last half second
+  bool everLh2 = false;    // has sent a beam word this session
 };
 
 struct MixedLightStep {
@@ -54,6 +61,10 @@ struct MixedLightStep {
 
 // visitEvery: s in LH1 mode between visits to LH2 mode; 0: only when lost or dark.
 MixedLightStep ChooseMixedLight(const MixedLightView& view, double visitEvery);
+
+// A device that can't do LH2 mode: still sending LH1 pulses 8 s after being told to go to LH2 mode,
+// past a re-send of the command (5 s), and never a beam word.
+bool LooksLh1Only(const MixedLightView& view);
 
 // The scout. Between a device's visits to LH2 mode its line for a 2.0 rotor runs off, about half of it
 // because the rotor's speed changes (stations warm for minutes after waking: 1-2.5 ppm over 10-15 min,
