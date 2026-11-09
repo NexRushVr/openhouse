@@ -98,7 +98,16 @@ driver's hooks, live in the mock host (`lh_openvr_host_test ... live`, renamed t
 with `vrserver`, `LH_HOST_SETTING_baseStationPowerOff=sleep`): four sleeping bases were
 waking 9 s after `Init`, and asleep 6 s after `Cleanup` (lhbase outlived the host).
 
-Not tested: inside a real vrserver (job object, Steam's process tracking), with
+Inside real SteamVR (one session, no headset connected, `baseStationPowerOff` = `sleep`):
+vrserver started `lhbase on --room` at `Init` (bases waking 7 s later) and `lhbase sleep
+--room` at the end of `Cleanup`, logged "Graceful exit" 0.35 s after that (it didn't wait:
+the helper outlives the real vrserver too), and the bases were asleep 7 s later. Steam
+kept SteamVR in its running list until the helper was done, about 9 s after vrserver
+exited (the same second with the stock driver), and lists the wake helper as one of
+SteamVR's processes while it runs. Starting SteamVR again inside those seconds wasn't
+tried.
+
+Not tested: a full session with a headset and trackers, with
 Bluetooth off or absent (unit-tested with a fake radio only), older base firmware
 (community notes on the protocol say older ones can't read the power state or do standby),
 a MinGW build.
