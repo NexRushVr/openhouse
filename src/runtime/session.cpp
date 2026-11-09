@@ -1474,9 +1474,21 @@ void SessionImpl::UpdateMixedRoom() {
   const bool active = mixed_.enabled && lh2;
   if (active == mixedActive_) return;
   mixedActive_ = active;
+  // Starting, every device chooses again (StartMixedLight). Stopping, every device that was mixing goes to
+  // LH2 mode, 2.0 light alone, and the usual choice goes on from there. Not choosing afresh: in a room of
+  // both kinds that's LH1 mode ("default"), the headset's too, which the stock driver, when it runs the
+  // headset's display, switches back after about 11 s, starting its own tracking over. And not staying in
+  // LH1 mode: unsorted, a device's light there is full of 2.0 hits it can't use, and the restarts it keeps
+  // making cost enough under the session's lock that the headset's USB reports were dropped (its IMU from
+  // 1011 to 444-867 samples/s). Live, either way, the headset lost tracking after every switch-off.
   for (auto& [id, d] : devices_) {
+    const bool wasMixing = d.tracker && d.tracker->Source().Sorting();
     StartMixedLight(d);
-    d.lightMode = -1;  // choose again, the usual way or the mixed one
+    if (active || !wasMixing || d.lightMode != 0 || !usb_ || !d.attached) continue;
+    usb_->SetOpticalSubProtocol(id, 1);
+    d.lightMode = 1;
+    d.modeSince = d.modeSent = now_;
+    Emit(SessionEventType::Log, id, id + ": light mode LH2 (1.0 + 2.0 switched off)");
   }
   char text[160];
   if (active) std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: in use (2.0 base %08X known)", lh2);
