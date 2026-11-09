@@ -31,6 +31,14 @@ class LighthouseDirect {
     multiStart_ = multiStart; filter_.gateSigma = gateSigma; swing_ = swing;
     filter_.gravityTolerance = multiStart ? 0.98 : 0.49033249999999996;
   }
+  // Not stock, off by default (0, 0): in a room with both kinds of base station, light in LH1 mode
+  // sits about twice as far from the pose as an LH2 word, and weighted as one it shakes the pose.
+  // sortedSeconds: added to the timing scatter of a 2.0 hit picked out of LH1 pulses
+  // (kSampleSorted); lh1Radians: to the angle scatter of a 1.0 station's hit.
+  void SetMixedLightScatter(double sortedSeconds, double lh1Radians) {
+    sortedScatter_ = sortedSeconds;
+    lh1Scatter_ = lh1Radians;
+  }
   void OnBaseConfig(const BaseConfig&, const BaseDynamicState&);
   void SetRecordedTilt(uint32_t serial, std::array<double, 2> tilt, double variance);
   void OnImu(const ImuSample&);
@@ -147,6 +155,7 @@ class LighthouseDirect {
   size_t primarySwitches_ = 0, secondaryBases_ = 0;
   uint64_t altGateUntil_ = 0;  // after a reseed: the other bases' light isn't frame-gated before this
   double lastWellLit_ = -1e300;  // the last frame of four sensors or more that was used
+  double sortedScatter_ = 0, lh1Scatter_ = 0;  // SetMixedLightScatter
   // ExpectedHits: the state carried forward, kept for a moment since it's asked per pulse.
   mutable double expectedState_[direct::kStateSize] = {};
   mutable double expectedTime_ = 0, expectedFilterTime_ = -1;

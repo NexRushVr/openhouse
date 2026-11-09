@@ -391,6 +391,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
   const int alt = slot == 0 ? -1 : kAltBaseIndex[slot - 1];
   std::vector<Residual> residuals;
   std::vector<double> z, facing;
+  std::vector<bool> sorted;
   for (const auto& s : samples) {
     const int idx = model_.IndexOf(s.sensor);
     const auto point = model_.points[size_t(idx)], normal = model_.normals[size_t(idx)];
@@ -406,6 +407,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
       [=](const double* x, double* r) { r[0] = SensorAngular(x, offset, point.data(), s.axis, cal.data(), alt, baseModel); },
       [=](const Jet* x, Jet* r) { r[0] = SensorAngular(x, offset, point.data(), s.axis, cal.data(), alt, baseModel); }});
     z.push_back(s.angle); facing.push_back(cos);
+    sorted.push_back((s.flags2 & kSampleSorted) != 0);
   }
   // 0x36f740: when every sample fails the facing cutoff it skips the update but
   // still returns PredictTo's result (true); x, P and time are left untouched.
@@ -430,6 +432,14 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
       grazing = std::atan(arg);
     }
     R(i, i) = variance + grazing * grazing;
+    // Not stock (SetMixedLightScatter): light in LH1 mode in a room with both kinds of station.
+    if (sorted[size_t(i)]) {
+      const double period = frame.averagePeriod > 0 ? frame.averagePeriod : 0.02;
+      const double angle = sortedScatter_ * 6.283185307179586 / period;
+      R(i, i) += angle * angle;
+    } else if (base.model == 1) {
+      R(i, i) += lh1Scatter_ * lh1Scatter_;
+    }
   }
   R(m - 1, m - 1) = 1e-8;
   // Not stock: right after a reseed (reacquired with a carried calibration, so already

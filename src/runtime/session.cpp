@@ -1440,6 +1440,7 @@ void SessionImpl::SetOutputTuning(double positionSmoothing, double rotationSmoot
 void SessionImpl::StartMixedLight(Device& d) {
   if (!d.tracker) return;
   d.tracker->Source().SetSorting(mixedActive_);
+  d.tracker->SetMixedLightScatter(mixedActive_ ? runtime::kSortedHitScatter : 0, mixedActive_ ? runtime::kLh1HitScatter : 0);
   if (mixedActive_) d.lightMode = -1;
 }
 
@@ -1456,7 +1457,7 @@ void SessionImpl::UpdateMixedRoom() {
   if (active == mixedActive_) return;
   mixedActive_ = active;
   for (auto& [id, d] : devices_) {
-    if (d.tracker) d.tracker->Source().SetSorting(active);
+    StartMixedLight(d);
     d.lightMode = -1;  // choose again, the usual way or the mixed one
   }
   char text[160];

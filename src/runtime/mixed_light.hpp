@@ -23,6 +23,13 @@ namespace lh::runtime {
 // while the scout (below) covers every rotor the device is using.
 constexpr double kVisitEvery = 45, kScoutedVisitEvery = 90;
 
+// Light in LH1 mode, weighted by how much it scatters (LighthouseDirect::SetMixedLightScatter). From the
+// frames the filter took in one session, per hit: LH2 words 0.06-0.07 mrad off the pose typically,
+// sorted 2.0 hits 0.11-0.14, the 1.0 station's 0.16-0.21. Weighted as LH2 words, that was 2-2.5 times
+// LH2 mode's jitter; these brought it near LH2 mode's, with no lag.
+constexpr double kSortedHitScatter = 1e-6;    // s, of a sorted 2.0 hit's timing
+constexpr double kLh1HitScatter = 0.5e-3;     // rad, of a 1.0 station's angle
+
 // Whether a device of this kind reads both kinds of base station.
 bool MixesLight(DeviceRole role, const MixedLightOptions& options);
 
