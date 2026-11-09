@@ -747,6 +747,17 @@ void SessionImpl::UpdateLightMode(const DeviceId& id, Device& d) {
     UpdateMixedLight(id, d);
     return;
   }
+  if (mixedActive_) {
+    // A 1.0-only device, its light ignored (OnLightPulse). Asked for LH2 mode again now and then, in case
+    // it can after all and the command was lost: a beam word from it lets it back in (OnLh2BeamWord).
+    constexpr double kAskAgain = 30.0;  // s
+    if (now_ - d.modeSent >= kAskAgain) {
+      usb_->SetOpticalSubProtocol(id, 1);
+      d.lightMode = 1;
+      d.modeSince = d.modeSent = now_;
+    }
+    return;
+  }
   bool knownLh1 = false, knownLh2 = false, seenLh1 = false, seenLh2 = false;
   for (const auto& [serial, b] : bases_) {
     const bool lh2 = b.config.model != 1;
@@ -809,9 +820,9 @@ void SessionImpl::UpdateMixedLight(const DeviceId& id, Device& d) {
   if (runtime::LooksLh1Only(view)) {
     d.lh1Only = true;
     StartMixedLight(d);
-    d.lightMode = -1;
-    Emit(SessionEventType::Log, id, id + ": still sending 1.0 light in LH2 mode, and never 2.0 light: a 1.0-only device, "
-                                         "left on the usual light mode", LogLevel::Info);
+    Emit(SessionEventType::Log, id, id + ": still sending 1.0 light in LH2 mode, and never 2.0 light: a 1.0-only device. With 2.0 "
+                                         "stations lit its light can't be used, so it's ignored while 1.0 + 2.0 is on (to use "
+                                         "it, switch that off and the 2.0 stations off too)", LogLevel::Warn);
     return;
   }
   const bool scouted = view.mode == 0 && ScoutCovers(d);
@@ -922,6 +933,10 @@ void SessionImpl::OnLightPulse(const DeviceId& id, const LightPulse& pulse) {
   if (pulse.width >= 56e-6 && pulse.width <= 140e-6) found->second.lastGoodLight = now_;  // a sync flash
   found->second.lastPulse = now_;
   found->second.lastPulseDeviceTime = pulse.time;
+  // A 1.0-only device in a room with 2.0 stations lit (runtime::LooksLh1Only): its light is mostly 2.0 hits
+  // it can't tell apart, and making sense of it is costly enough, under this lock, that the other devices'
+  // USB reports were dropped and the headset lost tracking (mixed_stations.md).
+  if (mixedActive_ && found->second.lh1Only) return;
   found->second.tracker->OnPulse(pulse);
 }
 

@@ -74,10 +74,12 @@ proper fix is outside this: reading USB off that lock, or cheaper restarts.
 they have no LH2 mode and see only 1.0 stations, so there are no beam words to learn a rotor from. Told to
 go to LH2 mode they keep sending LH1 pulses, where a device that can stops within about 30 ms. A device
 still doing that 8 s on (past a re-send), having never sent a beam word, is left out
-(`runtime::LooksLh1Only`): the usual light-mode choice, no sorting, no weighting. A beam word from it
-later lets it back in. With 2.0 stations lit, their light may reach such a device's LH1 path as noise,
-as it does an Index controller's in LH1 mode without sorting (it never tracked): untested, as no such
-device was at hand.
+(`runtime::LooksLh1Only`): no sorting, no weighting, and its light is ignored while this is in use
+(`Session::OnLightPulse`), with a warning in the log. With 2.0 stations lit, that light is mostly 2.0 hits
+it can't tell apart: a Vive wand on its own dongle tracked about 11 % of a replay, kept failing its IMU
+calibration, and starved the headset (below). It's asked for LH2 mode again every 30 s, and a beam word
+from it lets it back in, in case it was a device that can whose command was lost. To use one, switch
+1.0 + 2.0 off and the 2.0 stations off too.
 
 **How long a visit holds.** Between visits the line is carried forward, and 1 us of timing error turns every
 angle from that station by 0.31 mrad, about 1 mm at 3 m. A line fitted on one visit, against the next
@@ -165,7 +167,10 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
 ## Limits and open items
 
 * 1.0-only devices (original Vive headset, Vive wands, 2017 Vive Tracker) get nothing from this, and are
-  left out once they show themselves (above); the guard is untested on such hardware.
+  ignored once they show themselves (above). The detection worked live on a Vive wand; an original Vive
+  headset, which would then lose tracking, wasn't at hand.
+* With the switch off, master's light-mode choice runs, and in a room of both kinds it puts devices in LH1
+  mode unsorted, starving the others (above); a 1.0-only device does that whatever the switch says.
 * Trackers, several 1.0 stations, sync cables and lhbs multi-station alongside 2.0 stations: untested.
 * Hard swings from a cold start are less reliable than in LH2 mode (above).
 * A rotor needs a visit with its station in view before its hits can be used.
