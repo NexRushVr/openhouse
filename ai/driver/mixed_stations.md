@@ -55,6 +55,20 @@ Kinds of device: controllers and trackers each have a switch (on by default). Th
 mode: the stock driver, loaded for its display, runs its own tracker for it and puts it back in LH2 mode
 about 11 s after each LH1 command ("SwSyncDetect Restart ... enabling Sync on Beam"), re-bootstrapping
 its own universe as it does. Using 1.0 light on the headset would need that command kept from the headset.
+Switching it off sends every device that was mixing to LH2 mode, 2.0 light alone, for the usual choice to
+go on from. Choosing afresh puts the headset in LH1 mode in a room of both kinds ("default"); leaving the
+controllers in LH1 mode leaves them on unsorted light (below). Live, the headset lost tracking after every
+switch-off either way, until this.
+
+**Unsorted light starves the other devices.** In a room with 2.0 stations lit, a device in LH1 mode that
+isn't sorting (master's choice in such a room, or any 1.0-only device) gets mostly 2.0 hits it can't use. It
+keeps restarting its tracking, each restart a fresh pose solve, all under the session's one lock. That held
+up the other devices' USB reads enough that the headset's reports were dropped: its IMU, about 1011 samples
+a second, fell to 444-867 while an Index controller sat unsorted in LH1 mode (1550-2030 pulses a second),
+and to 601-726 while a wand was on, and the headset lost tracking. Sorted, the same controller at 1300
+pulses a second cost the headset nothing. Replays don't show it (they never drop a report): replayed alone,
+the wand took 35 s of processor time for about 80 s of its light, and the controller 263 restarts. The
+proper fix is outside this: reading USB off that lock, or cheaper restarts.
 
 **1.0-only devices** (the original Vive headset, Vive wands, the 2017 Vive Tracker) can't use any of this:
 they have no LH2 mode and see only 1.0 stations, so there are no beam words to learn a rotor from. Told to
