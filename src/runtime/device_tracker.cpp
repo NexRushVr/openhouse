@@ -47,6 +47,8 @@ DeviceTracker::DeviceTracker(std::string id, TrackedObjectModel model, RoomMap* 
     : id_(std::move(id)), model_(std::move(model)), room_(room), source_(model_.sensorType, {}, !model_.sensorTypeKnown) {
   imuModel_ = std::make_shared<const TrackedObjectModel>(model_.InImuFrame());
   ResetFilter();
+  // While LH1 pulses are being sorted (1.0 and 2.0 stations together), the pose helps.
+  source_.SetPoseView([this](int sensor, double t, ExpectedHit* out) { return filter_->ExpectedHits(sensor, t, out); });
 }
 
 void DeviceTracker::ResetFilter() {

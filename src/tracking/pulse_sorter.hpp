@@ -1,0 +1,141 @@
+// Not stock: tells which LH1 pulses are hits from 2.0 base stations, in a room with both kinds
+// (ai/driver/mixed_stations.md).
+//
+// In LH1 light mode a device reports every laser hit as a plain pulse, 2.0 stations' too, but
+// with no sign of whose it is. Each 2.0 rotor keeps a very steady speed of its own, so where
+// a pulse falls within a rotor's revolution says whose it is. This turns those pulses into the
+// words the LH2 path takes: a hit time per sensor, and a beam word per revolution predicted
+// from the rotor. So no other part of tracking needs to know, and what isn't claimed can still
+// go down the LH1 path.
+//
+// A rotor's speed and phase come from real beam words, so a device needs a visit to LH2 mode
+// first, and again now and then (runtime/mixed_light.hpp). On a moving device a hit shifts
+// between revolutions, so each sensor's position within the revolution is followed, along with
+// how fast the whole channel's positions are moving.
+//
+// Timing alone can follow the wrong thing for seconds: nothing about a pulse says a track has
+// wandered onto another station's sweep. So when tracking has a pose, SetPose lets it say where
+// each sensor's hit should fall for each station. While most of what timing claims agrees, the
+// pose decides; once it stops agreeing the pose is what's suspect, and timing decides again
+// (better wrong light reaching the filter, which can notice, than light kept from it).
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <map>
+#include <vector>
+
+namespace lh {
+
+// Where the tracker's pose puts a sensor's hit for one plane of a base it is tracking.
+struct ExpectedHit {
+  uint32_t base = 0;
+  bool lh2 = true;
+  int axis = 0;
+  double angle = 0;     // as OpticalSample::angle
+  bool facing = false;  // false: from this pose this base can't hit this sensor
+  double window = 0;    // radians a hit may land from `angle`; 0: the sorter's narrowest
+};
+
+class PulseSorter {
+ public:
+  enum class Result {
+    NotOurs,  // no rotor claims it: a 1.0 station's, or unknown
+    Hit,      // a 2.0 hit: channel and hitTime are set
+    Dropped,  // could be more than one rotor's: better lost than wrong
+  };
+  static constexpr int kMaxExpected = 8;
+  // Fills `out` with up to kMaxExpected entries, returns how many: none without a usable pose.
+  using PoseView = std::function<int(int sensor, double t, ExpectedHit* out)>;
+  using ChannelBase = std::function<uint32_t(int channel)>;
+
+  // Real LH2 words: where rotors and hit positions are learned.
+  void OnBeamWord(double t, int channel, int generation);
+  void OnSensorWord(double t, int channel, int sensor);
+
+  // An LH1 pulse.
+  Result Sort(double start, double width, int sensor, int* channel, double* hitTime);
+  // Calls emit(time, channel, generation) for each predicted beam word up to `upTo`.
+  void DueBeamWords(double upTo, const std::function<void(double, int, int)>& emit);
+
+  void SetPose(PoseView view, ChannelBase base) {
+    poseView_ = std::move(view);
+    channelBase_ = std::move(base);
+  }
+
+  struct Counters {
+    uint64_t byTrack = 0, byBurst = 0, dropped = 0, notOurs = 0, syncWidth = 0, beams = 0, reacquired = 0, byLh1 = 0;
+    // What the pose did to timing's answer.
+    uint64_t poseAgreed = 0, poseMoved = 0, poseVetoed = 0, poseTied = 0, poseUntrusted = 0;
+  };
+  const Counters& Stats() const { return counters_; }
+  // Whether this channel has enough real beam words to predict.
+  bool Ready(int channel) const;
+  // The rotors heard so far. hearing: a real beam word within the last second before `now`.
+  struct RotorState {
+    int channel;
+    bool ready, hearing;
+  };
+  std::vector<RotorState> Rotors(double now) const;
+
+ private:
+  struct Track {  // one sensor, one plane, one channel
+    double phase = 0;
+    double last = -1;
+  };
+  struct Burst {  // one plane of one channel: where the device as a whole is in the revolution
+    double centre = 0;
+    double halfWidth = 0;
+    double shift = 0;  // seconds per revolution
+    double last = -1;
+  };
+  struct Rotor {
+    bool started = false;
+    int generation = -1;
+    long words = 0;
+    double anchor = 0, a = 0, b = 0;  // beam word n at anchor + a + n * b
+    double s0 = 0, sn = 0, sy = 0, snn = 0, sny = 0;  // fading least squares
+    double lastWord = 0;
+    long nextBeam = 0;
+    std::array<std::array<Track, 2>, 32> tracks{};
+    std::array<Burst, 2> bursts{};
+  };
+  struct Recent {
+    double time;
+  };
+  // Whose a pulse is, before anything is learned from it.
+  struct Guess {
+    enum class Kind { Nobody, Track, Burst, Lh1Track, Lh1Burst, Ambiguous } kind = Kind::Nobody;
+    int channel = -1, plane = 0;
+    double phase = 0, residual = 0, revolutions = 0;
+  };
+
+  double Phase(const Rotor& r, double t) const;
+  void Learn(Rotor& r, int plane, int sensor, double phase, double t, double residual, double revolutions, bool matched);
+  void Reacquire(double now);
+  void LearnLh1(int slot, int sensor, double phase, double t, double residual, double revolutions, bool matched);
+  bool InSweep(double t) const;
+  Guess ByTiming(double t, int sensor) const;
+  Guess ByPose(double t, int sensor, const Guess& timing);
+  Guess ClaimRotor(int channel, double t, int sensor) const;
+  Guess ClaimLh1(double t, int sensor) const;
+  Result Apply(const Guess& guess, double t, int sensor, int* channel, double* hitTime);
+
+  std::map<int, Rotor> rotors_;
+  // A 1.0 station's hits compete for each pulse, or they'd be taken for a 2.0 hit whenever one
+  // is due nearby. Timed from its flashes: two flashes a revolution, one per rotor.
+  std::array<std::array<Track, 2>, 32> lh1Tracks_{};
+  std::array<Burst, 2> lh1Bursts_{};
+  double lastFlash_ = -1;
+  int flashIndex_ = 0;
+  std::deque<Recent> unclaimed_;
+  double nextReacquire_ = 0;
+  PoseView poseView_;
+  ChannelBase channelBase_;
+  double poseTrust_ = 1;  // how much of what timing claims the pose agrees with, lately
+  Counters counters_;
+};
+
+}  // namespace lh

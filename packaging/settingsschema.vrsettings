@@ -30,6 +30,24 @@
                 "show_without_hmd": true
             },
             {
+                "name": "/settings/driver_openhouse/mixedLight",
+                "control": "toggle",
+                "label": "Use 1.0 and 2.0 base stations together (experimental)",
+                "show_without_hmd": true
+            },
+            {
+                "name": "/settings/driver_openhouse/mixedLightControllers",
+                "control": "toggle",
+                "label": "1.0 + 2.0: controllers use both kinds",
+                "show_without_hmd": true
+            },
+            {
+                "name": "/settings/driver_openhouse/mixedLightTrackers",
+                "control": "toggle",
+                "label": "1.0 + 2.0: trackers use both kinds",
+                "show_without_hmd": true
+            },
+            {
                 "name": "/settings/driver_openhouse/record",
                 "control": "toggle",
                 "label": "Record Session (disable to save)",
