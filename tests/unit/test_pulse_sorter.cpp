@@ -32,8 +32,73 @@ TEST(PulseSorterRotors, ANewGenerationStartsTheLineOver) {
   double t = 0;
   for (int i = 0; i < 150; ++i, t += period) sorter.OnBeamWord(t, 0, 0);
   ASSERT_TRUE(sorter.Ready(0));
+  const int epoch = sorter.Rotors(t)[0].epoch;
   sorter.OnBeamWord(t, 0, 1);
   EXPECT_FALSE(sorter.Ready(0));
+  EXPECT_NE(sorter.Rotors(t)[0].epoch, epoch);
+}
+
+TEST(PulseSorterScout, RecentPeriodIsTheRotorsSpeedNow) {
+  PulseSorter sorter;
+  const double nominal = lh::sob::kPeriodTicks[0] * lh::sob::kTickSeconds;
+  double t = 0, period = 0;
+  for (int i = 0; i < 100; ++i, t += nominal) sorter.OnBeamWord(t, 0, 0);
+  EXPECT_FALSE(sorter.RecentPeriod(0, t, &period));  // not enough words yet
+  // 2 ppm slower for 20 s: the recent period follows, the 45 s line lags behind.
+  const double slower = nominal * (1 + 2e-6);
+  for (int i = 0; i < 1000; ++i, t += slower) sorter.OnBeamWord(t, 0, 0);
+  ASSERT_TRUE(sorter.RecentPeriod(0, t, &period));
+  EXPECT_NEAR(period / nominal - 1, 2e-6, 0.05e-6);
+  EXPECT_FALSE(sorter.RecentPeriod(0, t + 2, &period));  // not heard for 2 s
+  EXPECT_FALSE(sorter.RecentPeriod(1, t, &period));
+}
+
+TEST(PulseSorterScout, ABadWordDoesntMoveTheRecentPeriod) {
+  PulseSorter sorter;
+  const double nominal = lh::sob::kPeriodTicks[0] * lh::sob::kTickSeconds;
+  double t = 0, period = 0;
+  for (int i = 0; i < 400; ++i, t += nominal) sorter.OnBeamWord(t, 0, 0);
+  sorter.OnBeamWord(t + 300e-6, 0, 0);  // one word 300 us late: about 1.5 ppm on 5 s of them
+  t += nominal;
+  for (int i = 0; i < 10; ++i, t += nominal) sorter.OnBeamWord(t, 0, 0);
+  ASSERT_TRUE(sorter.RecentPeriod(0, t, &period));
+  EXPECT_NEAR(period / nominal - 1, 0, 0.01e-6);
+  // But many in a row are the rotor: the recent line starts over on them.
+  for (int i = 0; i < 200; ++i, t += nominal) sorter.OnBeamWord(t + 100e-6, 0, 0);
+  ASSERT_TRUE(sorter.RecentPeriod(0, t, &period));
+  EXPECT_NEAR(period / nominal - 1, 0, 0.01e-6);
+}
+
+TEST(PulseSorterScout, DriftMovesThePredictedBeamWords) {
+  PulseSorter sorter;
+  const double period = lh::sob::kPeriodTicks[0] * lh::sob::kTickSeconds;
+  double t = 0;
+  for (int i = 0; i < 150; ++i, t += period) sorter.OnBeamWord(t, 0, 0);
+  std::vector<double> plain, moved;
+  sorter.DueBeamWords(t + 0.1, [&](double w, int, int) { plain.push_back(w); });
+  PulseSorter other;
+  double u = 0;
+  for (int i = 0; i < 150; ++i, u += period) other.OnBeamWord(u, 0, 0);
+  other.SetDrift(0, 7e-6);
+  other.DueBeamWords(u + 0.1, [&](double w, int, int) { moved.push_back(w); });
+  ASSERT_EQ(plain.size(), moved.size());
+  ASSERT_FALSE(plain.empty());
+  for (size_t i = 0; i < plain.size(); ++i) EXPECT_NEAR(moved[i] - plain[i], 7e-6, 1e-9);
+}
+
+TEST(PulseSorterScout, AMovedLineStartsOverWhenRealWordsReturn) {
+  PulseSorter sorter;
+  const double period = lh::sob::kPeriodTicks[0] * lh::sob::kTickSeconds;
+  double t = 0;
+  for (int i = 0; i < 150; ++i, t += period) sorter.OnBeamWord(t, 0, 0);
+  const int epoch = sorter.Rotors(t)[0].epoch;
+  sorter.OnBeamWord(t + 3 * period, 0, 0);  // a short gap, no drift: the same line
+  EXPECT_EQ(sorter.Rotors(t)[0].epoch, epoch);
+  sorter.SetDrift(0, 2e-6);
+  t += 3 * period + 100 * period;  // 2 s on: a visit, same generation
+  sorter.OnBeamWord(t, 0, 0);
+  EXPECT_NE(sorter.Rotors(t)[0].epoch, epoch);
+  EXPECT_FALSE(sorter.Rotors(t)[0].ready);  // learns again, as at a new generation
 }
 
 namespace {

@@ -190,6 +190,67 @@ TEST(MixedLight, EachKindOfDeviceHasItsOwnSwitch) {
   EXPECT_FALSE(MixesLight(DeviceRole::Tracker, options));
 }
 
+namespace {
+// A rotor slowing steadily, as one warming up: 0.005 ppm more each second.
+constexpr double kPeriod = 0.02, kRamp = 0.005e-6;
+double Warming(double t) { return kPeriod * (1 + kRamp * t); }
+}  // namespace
+
+TEST(RotorScout, FollowsTheRotorsSpeed) {
+  auto s = lh::runtime::StartRotorScout(0, kPeriod);
+  double drift = 0;
+  for (double t = 0.25; t <= 60 + 1e-9; t += 0.25) {
+    const double p = Warming(t);
+    drift = lh::runtime::StepRotorScout(s, t, &p);
+  }
+  EXPECT_NEAR(drift, kRamp * 60 * 60 / 2, 0.05e-6);  // 9 us: the integral of the change
+  EXPECT_FALSE(s.lost);
+}
+
+TEST(RotorScout, KeepsTheRateThroughAHoleThenLetsGo) {
+  auto s = lh::runtime::StartRotorScout(0, kPeriod);
+  double drift = 0;
+  for (double t = 0.25; t <= 40 + 1e-9; t += 0.25) {
+    const double p = Warming(t);
+    drift = lh::runtime::StepRotorScout(s, t, &p);
+  }
+  const double at40 = drift, rate = s.rate;  // 0.2 ppm
+  for (double t = 40.25; t <= 60 + 1e-9; t += 0.25) drift = lh::runtime::StepRotorScout(s, t, nullptr);
+  EXPECT_FALSE(s.lost);
+  EXPECT_NEAR(drift, at40 + rate * 20, 0.01e-6);  // the last rate kept through 20 s without the scout
+  for (double t = 60.25; t <= 65 + 1e-9; t += 0.25) drift = lh::runtime::StepRotorScout(s, t, nullptr);
+  EXPECT_TRUE(s.lost);
+  const double frozen = drift;
+  for (double t = 65.25; t <= 90 + 1e-9; t += 0.25) {
+    const double p = Warming(t);
+    drift = lh::runtime::StepRotorScout(s, t, &p);
+  }
+  EXPECT_TRUE(s.lost);  // and then the line is on its own, even when the scout comes back
+  EXPECT_DOUBLE_EQ(drift, frozen);
+}
+
+TEST(RotorScout, ABadPeriodCountsAsNone) {
+  auto s = lh::runtime::StartRotorScout(0, kPeriod);
+  double drift = 0;
+  for (double t = 0.25; t <= 40 + 1e-9; t += 0.25) {
+    const double p = Warming(t);
+    drift = lh::runtime::StepRotorScout(s, t, &p);
+  }
+  const double at40 = drift, rate = s.rate;
+  const double wild = kPeriod * (1 + 5e-6);
+  for (double t = 40.25; t <= 45 + 1e-9; t += 0.25) drift = lh::runtime::StepRotorScout(s, t, &wild);
+  EXPECT_NEAR(drift, at40 + rate * 5, 0.01e-6);  // the rate kept, not 5 ppm
+}
+
+TEST(RotorScout, AJumpInTheScoutsPeriodIsFollowedOnlySlowly) {
+  auto s = lh::runtime::StartRotorScout(0, kPeriod);
+  const double jumped = kPeriod * (1 + 2e-6);  // within the 3 ppm limit, but no rotor changes so fast
+  double drift = 0;
+  for (double t = 0.25; t <= 5 + 1e-9; t += 0.25) drift = lh::runtime::StepRotorScout(s, t, &jumped);
+  EXPECT_NEAR(s.rate, 0.25e-6, 0.01e-6);  // 0.05 ppm a second
+  EXPECT_LT(drift, 1e-6);  // against 10 us if taken at once
+}
+
 TEST(MixedLight, SwitchedOffInLh1GoesToLh2AtOnce) {
   MixedLightView v = InLh1(10.0);
   v.calm = false;  // even mid-swing: it was asked for

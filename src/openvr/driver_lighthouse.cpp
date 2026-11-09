@@ -1261,6 +1261,7 @@ class Provider : public IServerTrackedDeviceProvider {
     mixed.enabled = flag("mixedLight", false);
     mixed.controllers = flag("mixedLightControllers", true);
     mixed.trackers = flag("mixedLightTrackers", true);
+    mixed.scout = flag("mixedLightScout", true);
     session_->SetMixedLight(mixed);
     // Record session: raw device data to <data>/recordings while on (replay with
     // `lhtool session`); turning it off saves the bug report zip with it.

@@ -74,11 +74,22 @@ class PulseSorter {
   // Whether this channel has enough real beam words to predict.
   bool Ready(int channel) const;
   // The rotors heard so far. hearing: a real beam word within the last second before `now`.
+  // epoch: changes each time the rotor's line starts over. lastWord, lastClaim: device times of
+  // its latest real beam word and of the latest pulse claimed for it.
   struct RotorState {
     int channel;
     bool ready, hearing;
+    int epoch = 0;
+    double lastWord = 0, lastClaim = -1;
   };
   std::vector<RotorState> Rotors(double now) const;
+
+  // The scout (runtime/mixed_light.hpp). The rotor's period over the last few seconds of real beam
+  // words, if it has a real beam word within a second of `now`.
+  bool RecentPeriod(int channel, double now, double* period) const;
+  // Seconds added to every time the rotor's line predicts, until real beam words come again (after a
+  // gap, the line then starts over).
+  void SetDrift(int channel, double drift);
 
  private:
   struct Track {  // one sensor, one plane, one channel
@@ -95,9 +106,16 @@ class PulseSorter {
     bool started = false;
     int generation = -1;
     long words = 0;
-    double anchor = 0, a = 0, b = 0;  // beam word n at anchor + a + n * b
+    double anchor = 0, a = 0, b = 0;  // beam word n at anchor + a + drift + n * b
+    double drift = 0;                 // SetDrift
+    int epoch = 0;
     double s0 = 0, sn = 0, sy = 0, snn = 0, sny = 0;  // fading least squares
+    double q0 = 0, qn = 0, qy = 0, qnn = 0, qny = 0;  // the same over the last few seconds (RecentPeriod)
+    long qWords = 0;
+    int qSkipped = 0;       // words in a row left out of those as too far off
+    double lastRecent = 0;  // the latest word taken into them
     double lastWord = 0;
+    double lastClaim = -1;  // latest LH1 pulse claimed for it
     long nextBeam = 0;
     std::array<std::array<Track, 2>, 32> tracks{};
     std::array<Burst, 2> bursts{};
@@ -124,6 +142,7 @@ class PulseSorter {
   Result Apply(const Guess& guess, double t, int sensor, int* channel, double* hitTime);
 
   std::map<int, Rotor> rotors_;
+  int epochs_ = 0;
   // A 1.0 station's hits compete for each pulse, or they'd be taken for a 2.0 hit whenever one
   // is due nearby. Timed from its flashes: two flashes a revolution, one per rotor.
   std::array<std::array<Track, 2>, 32> lh1Tracks_{};
