@@ -59,6 +59,7 @@ void DeviceTracker::ResetFilter() {
   predictOutput_ = smoothOutput_ = holdStill_ = !stock;
   inertialLag_ = stock ? 0.02 : 0.12;
   if (!stock) filter_->SetImprovements(true, kGateSigma, true);
+  filter_->SetMixedLightScatter(mixedScatter_.first, mixedScatter_.second);
   for (const auto& [serial, base] : bases_) filter_->OnBaseConfig(base.first, base.second);
   roomRevision_ = ~uint64_t{0};
   calibratedLogged_ = false;
