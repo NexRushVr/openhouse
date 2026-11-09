@@ -71,8 +71,8 @@ class TrackingSource {
   tdm::MultiDisambiguator multi_;
   // LH2 light; a device reports either LH1 pulses or LH2 words (its light mode).
   sob::SobDisambiguator sob_;
-  // SetSorting. Before a device knows the rotors, 2.0 stations' pulses reach the LH1 path, and
-  // beside a lone 1.0 station they passed for an lhbs multi-station layout: multi_ waits.
+  // SetSorting. While it sorts, multi_ waits, as it was off for every test of this: a lone stock
+  // 1.0 station passed for an lhbs multi-station layout there (ai/driver/mixed_stations.md).
   std::unique_ptr<PulseSorter> sorter_;
   PulseSorter::PoseView poseView_;
   std::deque<OpticalFrame> pendingLh1_;  // LH1 frames waiting for older LH2 frames

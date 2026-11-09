@@ -318,7 +318,7 @@ class SessionImpl final : public Session, public InputSinkBase {
   std::map<std::string, std::string> roles_;  // settings.json "roles": serial -> tracked_controller_role
   bool persist_ = false;
   MixedLightOptions mixed_;  // SetMixedLight
-  bool mixedActive_ = false;  // mixed_.enabled, and a 2.0 station known (UpdateMixedRoom)
+  bool mixedActive_ = false;  // mixed_.enabled, and a 2.0 station to sort (UpdateMixedRoom)
   double lastScout_ = -1e300;
   std::deque<SessionEvent> events_;
   mutable double now_ = 0;  // latest host time seen (live: steady clock)
