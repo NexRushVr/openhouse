@@ -19,8 +19,9 @@
 namespace lh::runtime {
 
 // s in LH1 mode between visits to LH2 mode. A rotor's line, learned on a visit, runs off by about
-// 2.5 us (typical) to 9 us (worst tenth) over 45-60 s, against windows of 30 us and up.
-constexpr double kVisitEvery = 45;
+// 2.5 us (typical) to 9 us (worst tenth) over 45-60 s, against windows of 30 us and up. The second
+// while the scout (below) covers every rotor the device is using.
+constexpr double kVisitEvery = 45, kScoutedVisitEvery = 90;
 
 // Whether a device of this kind reads both kinds of base station.
 bool MixesLight(DeviceRole role, const MixedLightOptions& options);
@@ -46,5 +47,24 @@ struct MixedLightStep {
 
 // visitEvery: s in LH1 mode between visits to LH2 mode; 0: only when lost or dark.
 MixedLightStep ChooseMixedLight(const MixedLightView& view, double visitEvery);
+
+// The scout. Between a device's visits to LH2 mode its line for a 2.0 rotor runs off, about half of it
+// because the rotor's speed changes (stations warm for minutes after waking: 1-2.5 ppm over 10-15 min,
+// seen by every device alike). A device in LH2 mode all the while, the headset, measures that speed, so
+// the line can follow it: the time it has run off is the integral of the rotor's relative period change
+// since the line was learned. Only the change is passed on, so the two devices' clocks needn't line up
+// closely. In replays, 45-60 s after a visit this took a line from 2.5 to 1.5 us off typically and 6.9
+// to 4.1 us for the worst tenth, so a device whose every rotor in use has a scout visits half as often.
+struct RotorScout {
+  double reference = 0;  // the scout's period for the rotor when the line was learned
+  double drift = 0;      // s the line has run off since
+  double rate = 0;       // relative period change, as last heard
+  double lastHeard = 0;  // when the scout last had the period
+  double lastStep = 0;
+  bool lost = false;     // the scout was quiet too long: the line is on its own until the next visit
+};
+RotorScout StartRotorScout(double now, double period);
+// One step at `now`, with the scout's period if it has one now. Returns the drift for the line.
+double StepRotorScout(RotorScout& scout, double now, const double* period);
 
 }  // namespace lh::runtime

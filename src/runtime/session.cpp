@@ -247,7 +247,16 @@ class SessionImpl final : public Session, public InputSinkBase {
     double modeSince = 0, lastGoodLight = -1e300;  // host time
     // 1.0 and 2.0 stations together: see UpdateMixedLight.
     double lastPulse = -1e300, lastBeam = -1e300, lastTracked = -1e300, modeSent = -1e300, nextLightCheck = 0;
-    double lastBeamDeviceTime = 0;
+    double lastBeamDeviceTime = 0, lastPulseDeviceTime = 0;
+    // The scout (UpdateScout): per channel, the line it follows and whose periods it follows.
+    struct Scouted {
+      int epoch = -1;  // the sorter's line for the rotor
+      DeviceId from;
+      runtime::RotorScout scout;
+      bool none = false;  // no device had the rotor's period when the line was learned
+    };
+    std::map<int, Scouted> scouted;
+    bool scoutCovered = false;  // ScoutCovers, as last logged
   };
   struct Base {
     BaseConfig config;
@@ -264,6 +273,8 @@ class SessionImpl final : public Session, public InputSinkBase {
   void UpdateMixedLight(const DeviceId& id, Device& d);
   void UpdateMixedRoom();
   void StartMixedLight(Device& d);
+  void UpdateScout();
+  bool ScoutCovers(const Device& d) const;
   void PushIdentities();
   void TakeKeyframes(Device& d);
   bool SolveDue() const;
@@ -308,6 +319,7 @@ class SessionImpl final : public Session, public InputSinkBase {
   bool persist_ = false;
   MixedLightOptions mixed_;  // SetMixedLight
   bool mixedActive_ = false;  // mixed_.enabled, and a 2.0 station known (UpdateMixedRoom)
+  double lastScout_ = -1e300;
   std::deque<SessionEvent> events_;
   mutable double now_ = 0;  // latest host time seen (live: steady clock)
   double lastSave_ = 0;
@@ -713,6 +725,7 @@ void SessionImpl::OnImu(const DeviceId& id, const ImuSample& sample) {
   found->second.tracker->OnImu(sample);
   Process(id, found->second);
   UpdateMixedRoom();
+  UpdateScout();
   UpdateLightMode(id, found->second);
 }
 
@@ -789,18 +802,101 @@ void SessionImpl::UpdateMixedLight(const DeviceId& id, Device& d) {
   view.tracking = out.state == TrackingState::Tracking;
   view.lost = now_ - d.lastTracked;
   view.calm = !out.valid || (out.velocity.norm() < kCalmSpeed && out.angularVelocity.norm() < kCalmTurn);
-  const auto step = runtime::ChooseMixedLight(view, runtime::kVisitEvery);
+  const bool scouted = view.mode == 0 && ScoutCovers(d);
+  const auto step = runtime::ChooseMixedLight(view, scouted ? runtime::kScoutedVisitEvery : runtime::kVisitEvery);
   if (step.mode < 0) return;
   usb_->SetOpticalSubProtocol(id, step.mode);
   d.modeSent = now_;
   if (step.mode == d.lightMode) return;
   char detail[192];
-  std::snprintf(detail, sizeof detail, " after %.1f s, dark %.1f, rotors ready %d learning %d unnamed %d, %s, lost %.1f, %s",
+  std::snprintf(detail, sizeof detail, " after %.1f s, dark %.1f, rotors ready %d learning %d unnamed %d, %s, lost %.1f, %s%s",
                 view.inMode, view.dark, view.readyRotors, view.learningRotors, view.unnamedRotors,
-                view.tracking ? "tracking" : "not tracking", std::min(view.lost, 999.0), view.calm ? "calm" : "moving");
+                view.tracking ? "tracking" : "not tracking", std::min(view.lost, 999.0), view.calm ? "calm" : "moving",
+                scouted ? ", scouted" : "");
   Emit(SessionEventType::Log, id, id + ": light mode " + (step.mode ? "LH2" : "LH1") + " (" + step.why + ")" + (view.mode < 0 ? "" : detail));
   d.lightMode = step.mode;
   d.modeSince = now_;
+}
+
+// The scout (runtime/mixed_light.hpp), live and in replays alike: which light a device is in comes from
+// what it sends, not from what was asked of it.
+void SessionImpl::UpdateScout() {
+  constexpr double kEvery = 0.25;  // s
+  if (now_ - lastScout_ < kEvery) return;
+  lastScout_ = now_;
+  auto inLh2 = [&](const Device& d) { return now_ - d.lastBeam < 0.3; };
+  auto inLh1 = [&](const Device& d) { return now_ - d.lastPulse < 0.3 && now_ - d.lastBeam > 0.5; };
+  for (auto& [id, d] : devices_) {
+    if (!d.tracker) continue;
+    if (!mixedActive_ || !mixed_.scout || !Enabled(id)) {
+      for (const auto& [ch, s] : d.scouted) d.tracker->Source().SetRotorDrift(ch, 0);
+      d.scouted.clear();
+      d.scoutCovered = false;
+      continue;
+    }
+    // In LH2 mode the device has real words; its lines start over at the first after a gap.
+    if (!inLh1(d)) continue;
+    std::set<int> seen;
+    for (const auto& rotor : d.tracker->Source().Rotors(d.lastBeamDeviceTime)) {
+      if (!rotor.ready) continue;
+      seen.insert(rotor.channel);
+      auto& s = d.scouted[rotor.channel];
+      if (s.epoch != rotor.epoch) {
+        // A new line, learned on the visit just over: follow a device that has the rotor's period now,
+        // the headset first (it's in LH2 mode throughout).
+        s = {};
+        s.epoch = rotor.epoch;
+        const DeviceId* from = nullptr;
+        double period = 0;
+        for (const auto& [eid, e] : devices_) {
+          double p = 0;
+          if (&e == &d || !e.tracker || !Enabled(eid) || !inLh2(e)) continue;
+          if (!e.tracker->Source().RecentPeriod(rotor.channel, e.lastBeamDeviceTime, &p)) continue;
+          if (!from || e.info.role == DeviceRole::Hmd) {
+            from = &eid;
+            period = p;
+          }
+        }
+        if (from) {
+          s.from = *from;
+          s.scout = runtime::StartRotorScout(now_, period);
+        } else {
+          s.none = true;
+        }
+        continue;
+      }
+      if (s.none) continue;
+      double p = 0;
+      const double* period = nullptr;
+      const auto e = devices_.find(s.from);
+      if (e != devices_.end() && e->second.tracker && Enabled(s.from) && inLh2(e->second) &&
+          e->second.tracker->Source().RecentPeriod(rotor.channel, e->second.lastBeamDeviceTime, &p))
+        period = &p;
+      d.tracker->Source().SetRotorDrift(rotor.channel, runtime::StepRotorScout(s.scout, now_, period));
+    }
+    for (auto it = d.scouted.begin(); it != d.scouted.end();) it = seen.count(it->first) ? std::next(it) : d.scouted.erase(it);
+    const bool covered = ScoutCovers(d);
+    if (covered != d.scoutCovered) {
+      d.scoutCovered = covered;
+      char text[160];
+      std::snprintf(text, sizeof text, "%s: the scout %s every station in use: visits every %.0f s", id.c_str(),
+                    covered ? "covers" : "no longer covers", covered ? runtime::kScoutedVisitEvery : runtime::kVisitEvery);
+      Emit(SessionEventType::Log, id, text, LogLevel::Info);
+    }
+  }
+}
+
+// Whether every rotor the device is using now has a scout, so it can visit LH2 mode less often.
+bool SessionImpl::ScoutCovers(const Device& d) const {
+  if (!mixedActive_ || !mixed_.scout || !d.tracker) return false;
+  int used = 0;
+  for (const auto& rotor : d.tracker->Source().Rotors(d.lastBeamDeviceTime)) {
+    if (!rotor.ready || d.lastPulseDeviceTime - rotor.lastClaim > 1.0) continue;  // not claiming hits now
+    ++used;
+    const auto s = d.scouted.find(rotor.channel);
+    if (s == d.scouted.end() || s->second.epoch != rotor.epoch || s->second.none || s->second.scout.lost) return false;
+  }
+  return used > 0;
 }
 
 void SessionImpl::OnLightPulse(const DeviceId& id, const LightPulse& pulse) {
@@ -813,6 +909,7 @@ void SessionImpl::OnLightPulse(const DeviceId& id, const LightPulse& pulse) {
   Touch(found->second, pulse.time);
   if (pulse.width >= 56e-6 && pulse.width <= 140e-6) found->second.lastGoodLight = now_;  // a sync flash
   found->second.lastPulse = now_;
+  found->second.lastPulseDeviceTime = pulse.time;
   found->second.tracker->OnPulse(pulse);
 }
 
@@ -1381,7 +1478,8 @@ void SessionImpl::SetMixedLight(const MixedLightOptions& options) {
   mixed_ = options;
   auto onOff = [](bool on) { return on ? "on" : "off"; };
   Emit(SessionEventType::Log, "", std::string("1.0 + 2.0 base stations together: switch ") + onOff(options.enabled) + " (controllers " +
-                                  onOff(options.controllers) + ", trackers " + onOff(options.trackers) + ")", LogLevel::Info);
+                                  onOff(options.controllers) + ", trackers " + onOff(options.trackers) + ", scout " +
+                                  onOff(options.scout) + ")", LogLevel::Info);
   UpdateMixedRoom();
 }
 

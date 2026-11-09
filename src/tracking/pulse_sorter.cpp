@@ -12,6 +12,11 @@ namespace {
 constexpr double kSyncMin = 56e-6, kSyncMax = 140e-6;  // sync flash widths, as the session's
 constexpr double kMemory = 45.0;        // seconds a beam word's weight takes to fade by 1/e
 constexpr long kReadyWords = 100;       // about 2 s of real beam words before predicting
+// RecentPeriod: a rotor's speed now, for the scout. 5 s of words give it to about 0.01 ppm.
+constexpr double kScoutMemory = 5.0;
+constexpr long kScoutWords = 150;
+constexpr double kRecentOutlier = 20e-6;  // s off the recent line (good words: about 1 us)
+constexpr int kRecentSkips = 25;
 constexpr double kJump = 500e-6;        // a beam word this far off: the rotor changed
 constexpr double kTrackLife = 0.5;      // seconds a hit position stays useful
 constexpr double kTight = 30e-6;        // a sensor's hit from one revolution to the next
@@ -56,24 +61,45 @@ bool PulseSorter::Ready(int channel) const {
 
 std::vector<PulseSorter::RotorState> PulseSorter::Rotors(double now) const {
   std::vector<RotorState> out;
-  for (const auto& [channel, r] : rotors_) out.push_back({channel, r.words >= kReadyWords, now - r.lastWord < 1.0});
+  for (const auto& [channel, r] : rotors_)
+    out.push_back({channel, r.words >= kReadyWords, now - r.lastWord < 1.0, r.epoch, r.lastWord, r.lastClaim});
   return out;
 }
 
+bool PulseSorter::RecentPeriod(int channel, double now, double* period) const {
+  const auto it = rotors_.find(channel);
+  if (it == rotors_.end()) return false;
+  const Rotor& r = it->second;
+  if (r.qWords < kScoutWords || now - r.lastRecent > 1.0) return false;
+  const double det = r.q0 * r.qnn - r.qn * r.qn;
+  if (!(det > 0)) return false;
+  *period = (r.q0 * r.qny - r.qn * r.qy) / det;
+  return true;
+}
+
+void PulseSorter::SetDrift(int channel, double drift) {
+  const auto it = rotors_.find(channel);
+  if (it != rotors_.end()) it->second.drift = drift;
+}
+
 double PulseSorter::Phase(const Rotor& r, double t) const {
-  const double n = std::floor((t - r.anchor - r.a) / r.b);
-  return t - (r.anchor + r.a + r.b * n);
+  const double n = std::floor((t - r.anchor - r.a - r.drift) / r.b);
+  return t - (r.anchor + r.a + r.drift + r.b * n);
 }
 
 void PulseSorter::OnBeamWord(double t, int channel, int generation) {
   if (channel < 0 || channel >= sob::kChannels) return;
   Rotor& r = rotors_[channel];
-  const bool jumped = r.started && r.words >= kReadyWords && std::fabs(Wrap(t - r.anchor - r.a, r.b)) > kJump;
-  // A new generation (bit 27) comes at almost every visit to LH2 mode; the line starts over.
-  if (!r.started || r.generation != generation || jumped) {
+  const bool gap = r.started && t - r.lastWord > 1.0;
+  const bool jumped = r.started && r.words >= kReadyWords &&
+                      std::fabs(Wrap(t - r.anchor - r.a - r.drift, r.b)) > kJump;
+  // A new generation (bit 27) comes at almost every visit to LH2 mode; the line starts over. So does
+  // one the scout moved, which can't take real words into its sums.
+  if (!r.started || r.generation != generation || jumped || (gap && r.drift != 0)) {
     r = Rotor{};
     r.started = true;
     r.generation = generation;
+    r.epoch = ++epochs_;
     r.anchor = t;
     r.b = double(sob::kPeriodTicks[size_t(channel)]) * sob::kTickSeconds;
     r.lastWord = t;
@@ -86,6 +112,35 @@ void PulseSorter::OnBeamWord(double t, int channel, int generation) {
   r.sy = r.sy * fade + y;
   r.snn = r.snn * fade + double(n) * double(n);
   r.sny = r.sny * fade + double(n) * y;
+  // A word far off the recent line is a bad one, and one of a few hundred us would move a few seconds'
+  // period by 1-2 ppm (one headset had some), so it's left out; many in a row are a real change.
+  bool recentWord = true;
+  const double qdet = r.q0 * r.qnn - r.qn * r.qn;
+  if (r.qWords >= 50 && qdet > 0) {
+    const double qb = (r.q0 * r.qny - r.qn * r.qy) / qdet;
+    const double qa = (r.qy - qb * r.qn) / r.q0;
+    if (std::fabs(y - qa - qb * double(n)) > kRecentOutlier) {
+      if (++r.qSkipped <= kRecentSkips) {
+        recentWord = false;
+      } else {
+        r.q0 = r.qn = r.qy = r.qnn = r.qny = 0;
+        r.qWords = 0;
+        r.qSkipped = 0;
+      }
+    } else {
+      r.qSkipped = 0;
+    }
+  }
+  if (recentWord) {
+    const double recent = r.qWords ? std::exp(-(t - r.lastRecent) / kScoutMemory) : 0;
+    r.q0 = r.q0 * recent + 1;
+    r.qn = r.qn * recent + double(n);
+    r.qy = r.qy * recent + y;
+    r.qnn = r.qnn * recent + double(n) * double(n);
+    r.qny = r.qny * recent + double(n) * y;
+    ++r.qWords;
+    r.lastRecent = t;
+  }
   r.lastWord = t;
   ++r.words;
   r.nextBeam = n + 1;
@@ -389,12 +444,14 @@ PulseSorter::Result PulseSorter::Apply(const Guess& guess, double t, int sensor,
       return Result::NotOurs;
     case Guess::Kind::Track:
       Learn(rotors_[guess.channel], guess.plane, sensor, guess.phase, t, guess.residual, guess.revolutions, true);
+      rotors_[guess.channel].lastClaim = t;
       ++counters_.byTrack;
       *channel = guess.channel;
       *hitTime = t;
       return Result::Hit;
     case Guess::Kind::Burst:
       Learn(rotors_[guess.channel], guess.plane, sensor, guess.phase, t, 0, 0, false);
+      rotors_[guess.channel].lastClaim = t;
       ++counters_.byBurst;
       *channel = guess.channel;
       *hitTime = t;
@@ -454,10 +511,10 @@ void PulseSorter::DueBeamWords(double upTo, const std::function<void(double, int
   for (auto& [ch, r] : rotors_) {
     if (r.words < kReadyWords) continue;
     // After a long gap, only the current revolution: the 2.0 path counts the rest as missed.
-    const long now = long(std::floor((upTo - r.anchor - r.a) / r.b));
+    const long now = long(std::floor((upTo - r.anchor - r.a - r.drift) / r.b));
     if (now - r.nextBeam > 100) r.nextBeam = now;
     while (true) {
-      const double t = r.anchor + r.a + r.b * double(r.nextBeam);
+      const double t = r.anchor + r.a + r.drift + r.b * double(r.nextBeam);
       if (t > upTo) break;
       emit(t, ch, r.generation);
       ++r.nextBeam;

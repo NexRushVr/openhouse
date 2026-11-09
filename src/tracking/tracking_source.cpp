@@ -211,6 +211,16 @@ std::vector<PulseSorter::RotorState> TrackingSource::Rotors(double now) const {
   return sorter_ ? sorter_->Rotors(now) : std::vector<PulseSorter::RotorState>{};
 }
 
+bool TrackingSource::RecentPeriod(int channel, double now, double* period) const {
+  std::lock_guard lock(mutex_);
+  return sorter_ && sorter_->RecentPeriod(channel, now, period);
+}
+
+void TrackingSource::SetRotorDrift(int channel, double drift) {
+  std::lock_guard lock(mutex_);
+  if (sorter_) sorter_->SetDrift(channel, drift);
+}
+
 uint32_t TrackingSource::ChannelSerial(int channel) const {
   std::lock_guard lock(mutex_);
   return sob_.ChannelSerial(channel);

@@ -49,6 +49,10 @@ class TrackingSource {
   void SetPoseView(PulseSorter::PoseView view);
   // The sorter's rotors; none while not sorting.
   std::vector<PulseSorter::RotorState> Rotors(double now) const;
+  // The scout (runtime/mixed_light.hpp), under the source's lock: PulseSorter::RecentPeriod and
+  // SetDrift. Without a sorter, no period and nothing to set.
+  bool RecentPeriod(int channel, double now, double* period) const;
+  void SetRotorDrift(int channel, double drift);
   // The base on an LH2 channel, 0 while it isn't known.
   uint32_t ChannelSerial(int channel) const;
 

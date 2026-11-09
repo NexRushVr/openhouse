@@ -1,5 +1,8 @@
 #include "mixed_light.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 namespace lh::runtime {
 
 namespace {
@@ -15,7 +18,37 @@ constexpr double kNoRotorsRetry = 15.0;  // s in LH1 mode knowing no rotors, bef
 constexpr double kLostBeforeHelp = 1.0;  // s lost in LH1 mode: leaves time to recover where it is
 constexpr double kMinLh1 = 3.0;       // s in LH1 mode before going back because lost
 constexpr double kOverdueFactor = 2;  // a visit goes ahead after this many intervals, calm or not
+constexpr double kScoutHold = 20.0;   // s the last rate is kept without the scout's period (offline: holes
+                                      // over 20 s were where it went wrong)
+constexpr double kScoutMaxChange = 3e-6;  // a period this far off is a bad fit, not the rotor
+// The rate follows the scout no faster than this, per second: a rotor's speed changed by up to about
+// 0.008 ppm/s in the recordings (warming up), so what moves faster is a bad stretch of the scout's.
+constexpr double kScoutMaxRateChange = 0.05e-6;
 }  // namespace
+
+RotorScout StartRotorScout(double now, double period) {
+  RotorScout s;
+  s.reference = period;
+  s.lastHeard = s.lastStep = now;
+  return s;
+}
+
+double StepRotorScout(RotorScout& s, double now, const double* period) {
+  const double dt = std::max(0.0, now - s.lastStep);
+  s.lastStep = now;
+  if (s.lost) return s.drift;
+  const double before = s.rate;
+  if (period && s.reference > 0 && std::fabs(*period / s.reference - 1) < kScoutMaxChange) {
+    const double step = kScoutMaxRateChange * dt;
+    s.rate = std::clamp(*period / s.reference - 1, before - step, before + step);
+    s.lastHeard = now;
+  } else if (now - s.lastHeard > kScoutHold) {
+    s.lost = true;
+    return s.drift;
+  }
+  s.drift += 0.5 * (before + s.rate) * dt;
+  return s.drift;
+}
 
 bool MixesLight(DeviceRole role, const MixedLightOptions& options) {
   switch (role) {

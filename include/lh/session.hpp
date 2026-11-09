@@ -185,6 +185,9 @@ struct MixedLightOptions {
   // Which kinds of device read both; the others stay on 2.0 light (LH2 mode), as the headset
   // always does. Trackers are everything that isn't a headset or a controller.
   bool controllers = true, trackers = true;
+  // The headset, in LH2 mode, times each 2.0 station for the others, so they visit LH2 mode half as
+  // often while it covers every station they use.
+  bool scout = true;
   bool operator==(const MixedLightOptions&) const = default;
 };
 
