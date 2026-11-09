@@ -102,26 +102,34 @@ class PulseSorter {
     double shift = 0;  // seconds per revolution
     double last = -1;
   };
-  struct Rotor {
-    bool started = false;
-    int generation = -1;
+  // A rotor's timing, from its real beam words: beam word n at anchor + a + drift + n * b, by fading
+  // least squares, with a second fit over the last few seconds for the scout.
+  struct RotorLine {
+    double anchor = 0, a = 0, b = 0;
+    double drift = 0;  // SetDrift
     long words = 0;
-    double anchor = 0, a = 0, b = 0;  // beam word n at anchor + a + drift + n * b
-    double drift = 0;                 // SetDrift
-    int epoch = 0;
-    double s0 = 0, sn = 0, sy = 0, snn = 0, sny = 0;  // fading least squares
-    double q0 = 0, qn = 0, qy = 0, qnn = 0, qny = 0;  // the same over the last few seconds (RecentPeriod)
+    double lastWord = 0;
+    double s0 = 0, sn = 0, sy = 0, snn = 0, sny = 0;  // the line
+    double q0 = 0, qn = 0, qy = 0, qnn = 0, qny = 0;  // the last few seconds' (RecentPeriod)
     long qWords = 0;
     int qSkipped = 0;       // words in a row left out of those as too far off
     double lastRecent = 0;  // the latest word taken into them
-    double lastWord = 0;
+    void Start(double t, double nominalPeriod);
+    long Add(double t);  // a real beam word; returns its revolution number
+    bool RecentPeriod(double now, double* period) const;
+    double Phase(double t) const;  // seconds into the revolution at t
+    int Plane(double phase) const { return phase >= 0.5 * b ? 1 : 0; }
+  };
+  struct Rotor {
+    bool started = false;
+    int generation = -1;
+    int epoch = 0;
+    RotorLine line;
     double lastClaim = -1;  // latest LH1 pulse claimed for it
     long nextBeam = 0;
     std::array<std::array<Track, 2>, 32> tracks{};
     std::array<Burst, 2> bursts{};
-  };
-  struct Recent {
-    double time;
+    bool Ready() const;
   };
   // Whose a pulse is, before anything is learned from it.
   struct Guess {
@@ -129,8 +137,16 @@ class PulseSorter {
     int channel = -1, plane = 0;
     double phase = 0, residual = 0, revolutions = 0;
   };
+  // A pulse against a sensor's track: how far it lands from where the track and its burst's shift put
+  // it, how many revolutions on, and how far it may.
+  struct TrackFit {
+    double residual = 0, revolutions = 0, window = 0;
+  };
 
-  double Phase(const Rotor& r, double t) const;
+  // period: a 2.0 rotor's revolution, whose phase wraps; a 1.0 station's time since its flash doesn't.
+  static TrackFit Fit(const Track& track, const Burst& burst, double phase, double t, double period, bool wrap);
+  static void Follow(Track& track, Burst& burst, double phase, double t, double residual, double revolutions, bool matched,
+                     double wrapPeriod);
   void Learn(Rotor& r, int plane, int sensor, double phase, double t, double residual, double revolutions, bool matched);
   void Reacquire(double now);
   void LearnLh1(int slot, int sensor, double phase, double t, double residual, double revolutions, bool matched);
@@ -149,7 +165,7 @@ class PulseSorter {
   std::array<Burst, 2> lh1Bursts_{};
   double lastFlash_ = -1;
   int flashIndex_ = 0;
-  std::deque<Recent> unclaimed_;
+  std::deque<double> unclaimed_;  // times of recent pulses nobody claimed
   double nextReacquire_ = 0;
   PoseView poseView_;
   ChannelBase channelBase_;

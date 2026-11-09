@@ -52,156 +52,196 @@ double Wrap(double x, double period) {
   return x - 0.5 * period;
 }
 
+// A track's or burst's last hit is recent enough to go by.
+bool Fresh(double last, double t) { return last >= 0 && t - last <= kTrackLife; }
+
 }  // namespace
+
+// ---- A rotor's line ---------------------------------------------------------------------------
+
+void PulseSorter::RotorLine::Start(double t, double nominalPeriod) {
+  *this = RotorLine{};
+  anchor = t;
+  b = nominalPeriod;
+  lastWord = t;
+}
+
+long PulseSorter::RotorLine::Add(double t) {
+  const long n = std::lround((t - anchor - a) / b);
+  const double y = t - anchor;
+  const double fade = std::exp(-(t - lastWord) / kMemory);
+  s0 = s0 * fade + 1;
+  sn = sn * fade + double(n);
+  sy = sy * fade + y;
+  snn = snn * fade + double(n) * double(n);
+  sny = sny * fade + double(n) * y;
+  // A word far off the recent line is a bad one, and one of a few hundred us would move a few seconds'
+  // period by 1-2 ppm (one headset had some), so it's left out; many in a row are a real change.
+  bool recentWord = true;
+  const double qdet = q0 * qnn - qn * qn;
+  if (qWords >= 50 && qdet > 0) {
+    const double qb = (q0 * qny - qn * qy) / qdet;
+    const double qa = (qy - qb * qn) / q0;
+    if (std::fabs(y - qa - qb * double(n)) > kRecentOutlier) {
+      if (++qSkipped <= kRecentSkips) {
+        recentWord = false;
+      } else {
+        q0 = qn = qy = qnn = qny = 0;
+        qWords = 0;
+        qSkipped = 0;
+      }
+    } else {
+      qSkipped = 0;
+    }
+  }
+  if (recentWord) {
+    const double recent = qWords ? std::exp(-(t - lastRecent) / kScoutMemory) : 0;
+    q0 = q0 * recent + 1;
+    qn = qn * recent + double(n);
+    qy = qy * recent + y;
+    qnn = qnn * recent + double(n) * double(n);
+    qny = qny * recent + double(n) * y;
+    ++qWords;
+    lastRecent = t;
+  }
+  lastWord = t;
+  ++words;
+  const double det = s0 * snn - sn * sn;
+  if (words >= 20 && det > 0) {
+    b = (s0 * sny - sn * sy) / det;
+    a = (sy - b * sn) / s0;
+  }
+  return n;
+}
+
+bool PulseSorter::RotorLine::RecentPeriod(double now, double* period) const {
+  if (qWords < kScoutWords || now - lastRecent > 1.0) return false;
+  const double det = q0 * qnn - qn * qn;
+  if (!(det > 0)) return false;
+  *period = (q0 * qny - qn * qy) / det;
+  return true;
+}
+
+double PulseSorter::RotorLine::Phase(double t) const {
+  const double n = std::floor((t - anchor - a - drift) / b);
+  return t - (anchor + a + drift + b * n);
+}
+
+bool PulseSorter::Rotor::Ready() const { return line.words >= kReadyWords; }
+
+// ---- Rotors and their words -------------------------------------------------------------------
 
 bool PulseSorter::Ready(int channel) const {
   const auto it = rotors_.find(channel);
-  return it != rotors_.end() && it->second.words >= kReadyWords;
+  return it != rotors_.end() && it->second.Ready();
 }
 
 std::vector<PulseSorter::RotorState> PulseSorter::Rotors(double now) const {
   std::vector<RotorState> out;
   for (const auto& [channel, r] : rotors_)
-    out.push_back({channel, r.words >= kReadyWords, now - r.lastWord < 1.0, r.epoch, r.lastWord, r.lastClaim});
+    out.push_back({channel, r.Ready(), now - r.line.lastWord < 1.0, r.epoch, r.line.lastWord, r.lastClaim});
   return out;
 }
 
 bool PulseSorter::RecentPeriod(int channel, double now, double* period) const {
   const auto it = rotors_.find(channel);
-  if (it == rotors_.end()) return false;
-  const Rotor& r = it->second;
-  if (r.qWords < kScoutWords || now - r.lastRecent > 1.0) return false;
-  const double det = r.q0 * r.qnn - r.qn * r.qn;
-  if (!(det > 0)) return false;
-  *period = (r.q0 * r.qny - r.qn * r.qy) / det;
-  return true;
+  return it != rotors_.end() && it->second.line.RecentPeriod(now, period);
 }
 
 void PulseSorter::SetDrift(int channel, double drift) {
   const auto it = rotors_.find(channel);
-  if (it != rotors_.end()) it->second.drift = drift;
-}
-
-double PulseSorter::Phase(const Rotor& r, double t) const {
-  const double n = std::floor((t - r.anchor - r.a - r.drift) / r.b);
-  return t - (r.anchor + r.a + r.drift + r.b * n);
+  if (it != rotors_.end()) it->second.line.drift = drift;
 }
 
 void PulseSorter::OnBeamWord(double t, int channel, int generation) {
   if (channel < 0 || channel >= sob::kChannels) return;
   Rotor& r = rotors_[channel];
-  const bool gap = r.started && t - r.lastWord > 1.0;
-  const bool jumped = r.started && r.words >= kReadyWords &&
-                      std::fabs(Wrap(t - r.anchor - r.a - r.drift, r.b)) > kJump;
+  const bool gap = r.started && t - r.line.lastWord > 1.0;
+  const bool jumped = r.started && r.Ready() &&
+                      std::fabs(Wrap(t - r.line.anchor - r.line.a - r.line.drift, r.line.b)) > kJump;
   // A new generation (bit 27) comes at almost every visit to LH2 mode; the line starts over. So does
   // one the scout moved, which can't take real words into its sums.
-  if (!r.started || r.generation != generation || jumped || (gap && r.drift != 0)) {
+  if (!r.started || r.generation != generation || jumped || (gap && r.line.drift != 0)) {
     r = Rotor{};
     r.started = true;
     r.generation = generation;
     r.epoch = ++epochs_;
-    r.anchor = t;
-    r.b = double(sob::kPeriodTicks[size_t(channel)]) * sob::kTickSeconds;
-    r.lastWord = t;
+    r.line.Start(t, double(sob::kPeriodTicks[size_t(channel)]) * sob::kTickSeconds);
   }
-  const long n = std::lround((t - r.anchor - r.a) / r.b);
-  const double y = t - r.anchor;
-  const double fade = std::exp(-(t - r.lastWord) / kMemory);
-  r.s0 = r.s0 * fade + 1;
-  r.sn = r.sn * fade + double(n);
-  r.sy = r.sy * fade + y;
-  r.snn = r.snn * fade + double(n) * double(n);
-  r.sny = r.sny * fade + double(n) * y;
-  // A word far off the recent line is a bad one, and one of a few hundred us would move a few seconds'
-  // period by 1-2 ppm (one headset had some), so it's left out; many in a row are a real change.
-  bool recentWord = true;
-  const double qdet = r.q0 * r.qnn - r.qn * r.qn;
-  if (r.qWords >= 50 && qdet > 0) {
-    const double qb = (r.q0 * r.qny - r.qn * r.qy) / qdet;
-    const double qa = (r.qy - qb * r.qn) / r.q0;
-    if (std::fabs(y - qa - qb * double(n)) > kRecentOutlier) {
-      if (++r.qSkipped <= kRecentSkips) {
-        recentWord = false;
-      } else {
-        r.q0 = r.qn = r.qy = r.qnn = r.qny = 0;
-        r.qWords = 0;
-        r.qSkipped = 0;
-      }
-    } else {
-      r.qSkipped = 0;
-    }
-  }
-  if (recentWord) {
-    const double recent = r.qWords ? std::exp(-(t - r.lastRecent) / kScoutMemory) : 0;
-    r.q0 = r.q0 * recent + 1;
-    r.qn = r.qn * recent + double(n);
-    r.qy = r.qy * recent + y;
-    r.qnn = r.qnn * recent + double(n) * double(n);
-    r.qny = r.qny * recent + double(n) * y;
-    ++r.qWords;
-    r.lastRecent = t;
-  }
-  r.lastWord = t;
-  ++r.words;
-  r.nextBeam = n + 1;
-  const double det = r.s0 * r.snn - r.sn * r.sn;
-  if (r.words >= 20 && det > 0) {
-    r.b = (r.s0 * r.sny - r.sn * r.sy) / det;
-    r.a = (r.sy - r.b * r.sn) / r.s0;
-  }
-}
-
-void PulseSorter::Learn(Rotor& r, int plane, int sensor, double phase, double t, double residual, double revolutions, bool matched) {
-  Track& track = r.tracks[size_t(sensor)][size_t(plane)];
-  Burst& burst = r.bursts[size_t(plane)];
-  if (matched && revolutions >= 1)
-    burst.shift = std::clamp(burst.shift + 0.15 * residual / revolutions, -kMaxShift, kMaxShift);
-  track.phase = phase;
-  track.last = t;
-  if (burst.last < 0 || t - burst.last > kTrackLife) {
-    burst.centre = phase;
-    burst.halfWidth = kMinHalfWidth;
-    burst.shift = 0;
-  } else {
-    const double d = Wrap(phase - burst.centre, r.b);
-    burst.centre += 0.1 * d;
-    burst.halfWidth = std::max({kMinHalfWidth, std::fabs(d), burst.halfWidth * 0.998});
-  }
-  burst.last = t;
+  r.nextBeam = r.line.Add(t) + 1;
 }
 
 void PulseSorter::OnSensorWord(double t, int channel, int sensor) {
   if (sensor < 0 || sensor >= 32) return;
   const auto it = rotors_.find(channel);
-  if (it == rotors_.end() || it->second.words < kReadyWords) return;
+  if (it == rotors_.end() || !it->second.Ready()) return;
   Rotor& r = it->second;
-  const double phase = Phase(r, t);
-  Learn(r, phase >= 0.5 * r.b ? 1 : 0, sensor, phase, t, 0, 0, false);
+  const double phase = r.line.Phase(t);
+  Learn(r, r.line.Plane(phase), sensor, phase, t, 0, 0, false);
 }
 
-void PulseSorter::LearnLh1(int slot, int sensor, double phase, double t, double residual, double revolutions, bool matched) {
-  Track& track = lh1Tracks_[size_t(sensor)][size_t(slot)];
-  Burst& burst = lh1Bursts_[size_t(slot)];
+void PulseSorter::DueBeamWords(double upTo, const std::function<void(double, int, int)>& emit) {
+  for (auto& [ch, r] : rotors_) {
+    if (!r.Ready()) continue;
+    const RotorLine& l = r.line;
+    // After a long gap, only the current revolution: the 2.0 path counts the rest as missed.
+    const long now = long(std::floor((upTo - l.anchor - l.a - l.drift) / l.b));
+    if (now - r.nextBeam > 100) r.nextBeam = now;
+    while (true) {
+      const double t = l.anchor + l.a + l.drift + l.b * double(r.nextBeam);
+      if (t > upTo) break;
+      emit(t, ch, r.generation);
+      ++r.nextBeam;
+      ++counters_.beams;
+    }
+  }
+}
+
+// ---- Tracks and bursts, 2.0 and 1.0 alike -----------------------------------------------------
+
+PulseSorter::TrackFit PulseSorter::Fit(const Track& track, const Burst& burst, double phase, double t, double period, bool wrap) {
+  TrackFit fit;
+  fit.revolutions = std::round((t - track.last) / period);
+  const double off = phase - track.phase - burst.shift * fit.revolutions;
+  fit.residual = wrap ? Wrap(off, period) : off;
+  fit.window = std::min(kMaxWindow, kTight + 0.5 * std::fabs(burst.shift) + kPerRevolution * fit.revolutions);
+  return fit;
+}
+
+// A pulse taken for this track: the track moves to it, and its burst follows, with how fast the
+// device's hits move per revolution from a matched track.
+void PulseSorter::Follow(Track& track, Burst& burst, double phase, double t, double residual, double revolutions,
+                         bool matched, double wrapPeriod) {
   if (matched && revolutions >= 1)
     burst.shift = std::clamp(burst.shift + 0.15 * residual / revolutions, -kMaxShift, kMaxShift);
   track.phase = phase;
   track.last = t;
-  if (burst.last < 0 || t - burst.last > kTrackLife) {
+  if (!Fresh(burst.last, t)) {
     burst.centre = phase;
     burst.halfWidth = kMinHalfWidth;
     burst.shift = 0;
   } else {
-    const double d = phase - burst.centre;
+    const double d = wrapPeriod > 0 ? Wrap(phase - burst.centre, wrapPeriod) : phase - burst.centre;
     burst.centre += 0.1 * d;
     burst.halfWidth = std::max({kMinHalfWidth, std::fabs(d), burst.halfWidth * 0.998});
   }
   burst.last = t;
+}
+
+void PulseSorter::Learn(Rotor& r, int plane, int sensor, double phase, double t, double residual, double revolutions, bool matched) {
+  Follow(r.tracks[size_t(sensor)][size_t(plane)], r.bursts[size_t(plane)], phase, t, residual, revolutions, matched, r.line.b);
+}
+
+void PulseSorter::LearnLh1(int slot, int sensor, double phase, double t, double residual, double revolutions, bool matched) {
+  Follow(lh1Tracks_[size_t(sensor)][size_t(slot)], lh1Bursts_[size_t(slot)], phase, t, residual, revolutions, matched, 0);
 }
 
 bool PulseSorter::InSweep(double t) const {
   const double since = t - lastFlash_;
   return lastFlash_ >= 0 && since < kFlashLife && since > kLh1SweepFrom && since < kLh1SweepTo;
 }
+
+// ---- Whose a pulse is -------------------------------------------------------------------------
 
 PulseSorter::Result PulseSorter::Sort(double start, double width, int sensor, int* channel, double* hitTime) {
   if (width >= kSyncMin && width <= kSyncMax) {
@@ -226,24 +266,21 @@ PulseSorter::Guess PulseSorter::ByTiming(double t, int sensor) const {
   // First, a position this sensor was hit at a revolution or so ago.
   double bestScore = 1;
   for (const auto& [ch, r] : rotors_) {
-    if (r.words < kReadyWords) continue;
-    const double phase = Phase(r, t);
-    const int plane = phase >= 0.5 * r.b ? 1 : 0;
+    if (!r.Ready()) continue;
+    const double phase = r.line.Phase(t);
+    const int plane = r.line.Plane(phase);
     const Track& track = r.tracks[size_t(sensor)][size_t(plane)];
-    if (track.last < 0 || t - track.last > kTrackLife) continue;
-    const double revolutions = std::round((t - track.last) / r.b);
-    const Burst& burst = r.bursts[size_t(plane)];
-    const double residual = Wrap(phase - track.phase - burst.shift * revolutions, r.b);
-    const double window = std::min(kMaxWindow, kTight + 0.5 * std::fabs(burst.shift) + kPerRevolution * revolutions);
-    const double score = std::fabs(residual) / window;
+    if (!Fresh(track.last, t)) continue;
+    const TrackFit fit = Fit(track, r.bursts[size_t(plane)], phase, t, r.line.b, true);
+    const double score = std::fabs(fit.residual) / fit.window;
     if (score < bestScore) {
       bestScore = score;
       guess.kind = Guess::Kind::Track;
       guess.channel = ch;
       guess.plane = plane;
       guess.phase = phase;
-      guess.residual = residual;
-      guess.revolutions = revolutions;
+      guess.residual = fit.residual;
+      guess.revolutions = fit.revolutions;
     }
   }
   // A 1.0 station's: where this sensor was hit that long after an earlier flash.
@@ -252,16 +289,13 @@ PulseSorter::Guess PulseSorter::ByTiming(double t, int sensor) const {
   const bool inSweep = InSweep(t);
   if (inSweep) {
     const Track& track = lh1Tracks_[size_t(sensor)][size_t(lh1Slot)];
-    if (track.last >= 0 && t - track.last <= kTrackLife) {
-      const double revolutions = std::round((t - track.last) / kLh1Period);
-      const Burst& burst = lh1Bursts_[size_t(lh1Slot)];
-      const double residual = lh1Phase - track.phase - burst.shift * revolutions;
-      const double window = std::min(kMaxWindow, kTight + 0.5 * std::fabs(burst.shift) + kPerRevolution * revolutions);
-      if (std::fabs(residual) / window < bestScore) {
+    if (Fresh(track.last, t)) {
+      const TrackFit fit = Fit(track, lh1Bursts_[size_t(lh1Slot)], lh1Phase, t, kLh1Period, false);
+      if (std::fabs(fit.residual) / fit.window < bestScore) {
         guess = Guess{};
         guess.kind = Guess::Kind::Lh1Track;
-        guess.residual = residual;
-        guess.revolutions = revolutions;
+        guess.residual = fit.residual;
+        guess.revolutions = fit.revolutions;
         return guess;
       }
     }
@@ -271,12 +305,12 @@ PulseSorter::Guess PulseSorter::ByTiming(double t, int sensor) const {
   // Next, a sensor newly in view: beside where the rest of the device is being hit.
   int candidates = 0;
   for (const auto& [ch, r] : rotors_) {
-    if (r.words < kReadyWords) continue;
-    const double phase = Phase(r, t);
-    const int plane = phase >= 0.5 * r.b ? 1 : 0;
+    if (!r.Ready()) continue;
+    const double phase = r.line.Phase(t);
+    const int plane = r.line.Plane(phase);
     const Burst& burst = r.bursts[size_t(plane)];
-    if (burst.last < 0 || t - burst.last > kTrackLife) continue;
-    if (std::fabs(Wrap(phase - burst.centre, r.b)) < burst.halfWidth + kBurstMargin) {
+    if (!Fresh(burst.last, t)) continue;
+    if (std::fabs(Wrap(phase - burst.centre, r.line.b)) < burst.halfWidth + kBurstMargin) {
       ++candidates;
       guess.channel = ch;
       guess.plane = plane;
@@ -285,7 +319,7 @@ PulseSorter::Guess PulseSorter::ByTiming(double t, int sensor) const {
   }
   // The same question for the 1.0 station's hits.
   const Burst& lh1Burst = lh1Bursts_[size_t(lh1Slot)];
-  const bool lh1Candidate = inSweep && lh1Burst.last >= 0 && t - lh1Burst.last <= kTrackLife &&
+  const bool lh1Candidate = inSweep && Fresh(lh1Burst.last, t) &&
                             std::fabs(lh1Phase - lh1Burst.centre) < lh1Burst.halfWidth + kBurstMargin;
   if ((candidates >= 1 && lh1Candidate) || candidates > 1) guess.kind = Guess::Kind::Ambiguous;
   else if (lh1Candidate) guess.kind = Guess::Kind::Lh1Burst;
@@ -298,17 +332,16 @@ PulseSorter::Guess PulseSorter::ClaimRotor(int channel, double t, int sensor) co
   Guess guess;
   guess.kind = Guess::Kind::Burst;
   guess.channel = channel;
-  guess.phase = Phase(r, t);
-  guess.plane = guess.phase >= 0.5 * r.b ? 1 : 0;
+  guess.phase = r.line.Phase(t);
+  guess.plane = r.line.Plane(guess.phase);
   const Track& track = r.tracks[size_t(sensor)][size_t(guess.plane)];
-  if (track.last >= 0 && t - track.last <= kTrackLife) {
-    const double revolutions = std::round((t - track.last) / r.b);
-    const double residual = Wrap(guess.phase - track.phase - r.bursts[size_t(guess.plane)].shift * revolutions, r.b);
+  if (Fresh(track.last, t)) {
+    const TrackFit fit = Fit(track, r.bursts[size_t(guess.plane)], guess.phase, t, r.line.b, true);
     // Too far from where it was to say anything about how fast hits are moving.
-    if (std::fabs(residual) < kMaxWindow) {
+    if (std::fabs(fit.residual) < kMaxWindow) {
       guess.kind = Guess::Kind::Track;
-      guess.residual = residual;
-      guess.revolutions = revolutions;
+      guess.residual = fit.residual;
+      guess.revolutions = fit.revolutions;
     }
   }
   return guess;
@@ -319,13 +352,12 @@ PulseSorter::Guess PulseSorter::ClaimLh1(double t, int sensor) const {
   guess.kind = Guess::Kind::Lh1Burst;
   const int slot = flashIndex_ & 1;
   const Track& track = lh1Tracks_[size_t(sensor)][size_t(slot)];
-  if (track.last >= 0 && t - track.last <= kTrackLife) {
-    const double revolutions = std::round((t - track.last) / kLh1Period);
-    const double residual = t - lastFlash_ - track.phase - lh1Bursts_[size_t(slot)].shift * revolutions;
-    if (std::fabs(residual) < kMaxWindow) {
+  if (Fresh(track.last, t)) {
+    const TrackFit fit = Fit(track, lh1Bursts_[size_t(slot)], t - lastFlash_, t, kLh1Period, false);
+    if (std::fabs(fit.residual) < kMaxWindow) {
       guess.kind = Guess::Kind::Lh1Track;
-      guess.residual = residual;
-      guess.revolutions = revolutions;
+      guess.residual = fit.residual;
+      guess.revolutions = fit.revolutions;
     }
   }
   return guess;
@@ -355,17 +387,17 @@ PulseSorter::Guess PulseSorter::ByPose(double t, int sensor, const Guess& timing
   std::array<bool, sob::kChannels> rotorFits{};
   bool lh1Expected = false, lh1Fits = false;
   for (const auto& [ch, r] : rotors_) {
-    if (r.words < kReadyWords || ch < 0 || ch >= sob::kChannels) continue;
+    if (!r.Ready() || ch < 0 || ch >= sob::kChannels) continue;
     const uint32_t base = channelBase_(ch);
     if (!base) continue;
-    const double phase = Phase(r, t);
-    const int plane = phase >= 0.5 * r.b ? 1 : 0;
+    const double phase = r.line.Phase(t);
+    const int plane = r.line.Plane(phase);
     for (int i = 0; i < n; ++i) {
       const ExpectedHit& e = expected[i];
       if (!e.lh2 || e.base != base || e.axis != plane) continue;
       rotorExpected[size_t(ch)] = true;
       if (!e.facing) continue;
-      const double miss = std::fabs(Wrap(phase * kTwoPi / r.b - e.angle, kTwoPi));
+      const double miss = std::fabs(Wrap(phase * kTwoPi / r.line.b - e.angle, kTwoPi));
       const double window = std::max(kPoseWindow, e.window);
       rotorFits[size_t(ch)] = miss < window;
       fit(ch, miss, window);
@@ -435,27 +467,21 @@ PulseSorter::Result PulseSorter::Apply(const Guess& guess, double t, int sensor,
   const int lh1Slot = flashIndex_ & 1;
   switch (guess.kind) {
     case Guess::Kind::Lh1Track:
-      LearnLh1(lh1Slot, sensor, lh1Phase, t, guess.residual, guess.revolutions, true);
-      ++counters_.byLh1;
-      return Result::NotOurs;
     case Guess::Kind::Lh1Burst:
-      LearnLh1(lh1Slot, sensor, lh1Phase, t, 0, 0, false);
+      LearnLh1(lh1Slot, sensor, lh1Phase, t, guess.residual, guess.revolutions, guess.kind == Guess::Kind::Lh1Track);
       ++counters_.byLh1;
       return Result::NotOurs;
     case Guess::Kind::Track:
-      Learn(rotors_[guess.channel], guess.plane, sensor, guess.phase, t, guess.residual, guess.revolutions, true);
-      rotors_[guess.channel].lastClaim = t;
-      ++counters_.byTrack;
+    case Guess::Kind::Burst: {
+      const bool track = guess.kind == Guess::Kind::Track;
+      Rotor& r = rotors_[guess.channel];
+      Learn(r, guess.plane, sensor, guess.phase, t, guess.residual, guess.revolutions, track);
+      r.lastClaim = t;
+      ++(track ? counters_.byTrack : counters_.byBurst);
       *channel = guess.channel;
       *hitTime = t;
       return Result::Hit;
-    case Guess::Kind::Burst:
-      Learn(rotors_[guess.channel], guess.plane, sensor, guess.phase, t, 0, 0, false);
-      rotors_[guess.channel].lastClaim = t;
-      ++counters_.byBurst;
-      *channel = guess.channel;
-      *hitTime = t;
-      return Result::Hit;
+    }
     case Guess::Kind::Ambiguous:
       ++counters_.dropped;
       return Result::Dropped;
@@ -466,8 +492,8 @@ PulseSorter::Result PulseSorter::Apply(const Guess& guess, double t, int sensor,
   // lose a 2.0 station, so look for it among these.
   if (InSweep(t)) LearnLh1(lh1Slot, sensor, lh1Phase, t, 0, 0, false);
   ++counters_.notOurs;
-  unclaimed_.push_back({t});
-  while (!unclaimed_.empty() && t - unclaimed_.front().time > kReacquireSpan) unclaimed_.pop_front();
+  unclaimed_.push_back(t);
+  while (!unclaimed_.empty() && t - unclaimed_.front() > kReacquireSpan) unclaimed_.pop_front();
   if (t >= nextReacquire_) {
     nextReacquire_ = t + kReacquireEvery;
     Reacquire(t);
@@ -478,47 +504,32 @@ PulseSorter::Result PulseSorter::Apply(const Guess& guess, double t, int sensor,
 void PulseSorter::Reacquire(double now) {
   if (unclaimed_.size() < size_t(kReacquireHits)) return;
   for (auto& [ch, r] : rotors_) {
-    if (r.words < kReadyWords) continue;
+    if (!r.Ready()) continue;
+    const double period = r.line.b;
     for (int plane = 0; plane < 2; ++plane) {
       Burst& burst = r.bursts[size_t(plane)];
-      if (burst.last >= 0 && now - burst.last <= kTrackLife) continue;
+      if (Fresh(burst.last, now)) continue;
       // A rotor's hits pile up in one part of its revolution. Anything else, like a 1.0
       // station's at its 60 Hz, spreads out.
-      const int bins = int(0.5 * r.b / kReacquireBin);
+      const int bins = int(0.5 * period / kReacquireBin);
       std::vector<int> counts(size_t(bins) + 1, 0);
       std::vector<double> first(size_t(bins) + 1, 1e300), latest(size_t(bins) + 1, -1e300);
-      for (const auto& pulse : unclaimed_) {
-        const double phase = Phase(r, pulse.time);
-        if ((phase >= 0.5 * r.b ? 1 : 0) != plane) continue;
-        const int bin = std::clamp(int((phase - plane * 0.5 * r.b) / kReacquireBin), 0, bins);
+      for (const double time : unclaimed_) {
+        const double phase = r.line.Phase(time);
+        if (r.line.Plane(phase) != plane) continue;
+        const int bin = std::clamp(int((phase - plane * 0.5 * period) / kReacquireBin), 0, bins);
         ++counts[size_t(bin)];
-        first[size_t(bin)] = std::min(first[size_t(bin)], pulse.time);
-        latest[size_t(bin)] = std::max(latest[size_t(bin)], pulse.time);
+        first[size_t(bin)] = std::min(first[size_t(bin)], time);
+        latest[size_t(bin)] = std::max(latest[size_t(bin)], time);
       }
       const int best = int(std::max_element(counts.begin(), counts.end()) - counts.begin());
       if (counts[size_t(best)] < kReacquireHits) continue;
-      if (latest[size_t(best)] - first[size_t(best)] < kReacquireMinRevs * r.b) continue;
-      burst.centre = plane * 0.5 * r.b + (best + 0.5) * kReacquireBin;
+      if (latest[size_t(best)] - first[size_t(best)] < kReacquireMinRevs * period) continue;
+      burst.centre = plane * 0.5 * period + (best + 0.5) * kReacquireBin;
       burst.halfWidth = 2 * kReacquireBin;
       burst.shift = 0;
       burst.last = now;
       ++counters_.reacquired;
-    }
-  }
-}
-
-void PulseSorter::DueBeamWords(double upTo, const std::function<void(double, int, int)>& emit) {
-  for (auto& [ch, r] : rotors_) {
-    if (r.words < kReadyWords) continue;
-    // After a long gap, only the current revolution: the 2.0 path counts the rest as missed.
-    const long now = long(std::floor((upTo - r.anchor - r.a - r.drift) / r.b));
-    if (now - r.nextBeam > 100) r.nextBeam = now;
-    while (true) {
-      const double t = r.anchor + r.a + r.drift + r.b * double(r.nextBeam);
-      if (t > upTo) break;
-      emit(t, ch, r.generation);
-      ++r.nextBeam;
-      ++counters_.beams;
     }
   }
 }
