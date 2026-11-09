@@ -82,6 +82,7 @@ add_library(lh_tracking
   src/tracking/tracked_object.cpp
   src/tracking/pose_solver.cpp
   src/tracking/tracking_source.cpp
+  src/tracking/pulse_sorter.cpp
   src/tracking/sample_history.cpp
   src/tracking/lighthouse_direct.cpp
   src/tracking/tracker.cpp
@@ -169,6 +170,7 @@ endif()
 
 # ---- liblh: the session runtime (shared room map, devices, input) -------------
 add_library(lh_runtime OBJECT
+  src/runtime/mixed_light.cpp
   src/runtime/room_map.cpp
   src/runtime/index_input.cpp
   src/runtime/device_tracker.cpp
@@ -287,7 +289,10 @@ if(LH_BUILD_TESTS)
     tests/unit/test_pose_solver.cpp
     tests/unit/test_tracker.cpp
     tests/unit/test_direct_filter.cpp
-    tests/unit/test_disambiguator_sob.cpp)
+    tests/unit/test_disambiguator_sob.cpp
+    tests/unit/test_pulse_sorter.cpp
+    tests/unit/test_mixed_light.cpp
+    src/runtime/mixed_light.cpp)
   target_include_directories(lh_unit_tests PRIVATE src)
   target_link_libraries(lh_unit_tests PRIVATE lh_tracking GTest::gtest_main)
   if(WIN32)

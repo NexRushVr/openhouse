@@ -1256,6 +1256,12 @@ class Provider : public IServerTrackedDeviceProvider {
     const double rotation = number("rotationSmoothingMs", 60) / 1000.0;
     const bool acceleration = flag("predictWithAcceleration", true);
     session_->SetOutputTuning(position, rotation, acceleration);
+    // 1.0 and 2.0 base stations together (ai/driver/mixed_stations.md).
+    lh::MixedLightOptions mixed;
+    mixed.enabled = flag("mixedLight", false);
+    mixed.controllers = flag("mixedLightControllers", true);
+    mixed.trackers = flag("mixedLightTrackers", true);
+    session_->SetMixedLight(mixed);
     // Record session: raw device data to <data>/recordings while on (replay with
     // `lhtool session`); turning it off saves the bug report zip with it.
     const bool record = flag("record", false);

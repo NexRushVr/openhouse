@@ -176,6 +176,18 @@ struct SessionEvent {
   LogLevel level = LogLevel::Info;
 };
 
+// Not stock: 1.0 and 2.0 base stations in one room, used together (ai/driver/mixed_stations.md).
+// Devices that do switch to LH1 mode, where they see both kinds, and their 2.0 stations' hits are
+// picked out of the LH1 pulses; now and then they visit LH2 mode to time the 2.0 stations again.
+// Off by default: only for rooms with both kinds.
+struct MixedLightOptions {
+  bool enabled = false;
+  // Which kinds of device read both; the others stay on 2.0 light (LH2 mode), as the headset
+  // always does. Trackers are everything that isn't a headset or a controller.
+  bool controllers = true, trackers = true;
+  bool operator==(const MixedLightOptions&) const = default;
+};
+
 struct SessionOptions {
   // Input: a .lhraw capture (replay) or, when empty, live USB devices.
   std::string replayPath;
@@ -210,6 +222,9 @@ struct SessionOptions {
   std::string preinitDirectory;
   // Live USB: also record every raw report to this .lhraw (replayable).
   std::string capturePath;
+  // 1.0 and 2.0 base stations together, from the start (SetMixedLight changes it). In a replay
+  // it sorts the recorded LH1 pulses; the light modes are the recording's.
+  MixedLightOptions mixedLight;
 };
 
 class Session {
@@ -236,6 +251,9 @@ class Session {
   // (glide time constants, s; 0 = at once) and whether poses carry the acceleration for
   // the host to predict with. Defaults 0.06 s, 0.06 s, true.
   virtual void SetOutputTuning(double positionSmoothing, double rotationSmoothing, bool reportAcceleration) = 0;
+  // Applied at once: devices that stop reading both kinds of base station go back to the
+  // usual choice of light mode, and those that start go to LH2 mode to time the 2.0 stations.
+  virtual void SetMixedLight(const MixedLightOptions& options) = 0;
 
   // Wireless receivers (dongles), live USB only: serial, and the device paired and
   // connected to it now ("" if none).

@@ -23,6 +23,7 @@
 #include "device_tracker.hpp"
 #include "index_input.hpp"
 #include "lh/input_sink.hpp"
+#include "mixed_light.hpp"
 #include "room_map.hpp"
 #include "room_solver.hpp"
 #include "tracking/tracked_object.hpp"
@@ -244,6 +245,9 @@ class SessionImpl final : public Session, public InputSinkBase {
     // Light mode (live only): 0 = LH1 pulses, 1 = LH2 words; -1 not set yet.
     int lightMode = -1;
     double modeSince = 0, lastGoodLight = -1e300;  // host time
+    // 1.0 and 2.0 stations together: see UpdateMixedLight.
+    double lastPulse = -1e300, lastBeam = -1e300, lastTracked = -1e300, modeSent = -1e300, nextLightCheck = 0;
+    double lastBeamDeviceTime = 0;
   };
   struct Base {
     BaseConfig config;
@@ -257,6 +261,9 @@ class SessionImpl final : public Session, public InputSinkBase {
   void Touch(Device& d, double deviceTime);
   void Process(const DeviceId& id, Device& d);
   void UpdateLightMode(const DeviceId& id, Device& d);
+  void UpdateMixedLight(const DeviceId& id, Device& d);
+  void UpdateMixedRoom();
+  void StartMixedLight(Device& d);
   void PushIdentities();
   void TakeKeyframes(Device& d);
   bool SolveDue() const;
@@ -266,6 +273,7 @@ class SessionImpl final : public Session, public InputSinkBase {
   void LoadSettings();
   void SaveSettings();
   void SetOutputTuning(double positionSmoothing, double rotationSmoothing, bool reportAcceleration) override;
+  void SetMixedLight(const MixedLightOptions& options) override;
   bool Enabled(const DeviceId& id) const { return !disabled_.count(id); }
   void CollectLogs(Device* d);
   void MaybeSave();
@@ -298,6 +306,8 @@ class SessionImpl final : public Session, public InputSinkBase {
   bool reportAcceleration_ = true;
   std::map<std::string, std::string> roles_;  // settings.json "roles": serial -> tracked_controller_role
   bool persist_ = false;
+  MixedLightOptions mixed_;  // SetMixedLight
+  bool mixedActive_ = false;  // mixed_.enabled, and a 2.0 station known (UpdateMixedRoom)
   std::deque<SessionEvent> events_;
   mutable double now_ = 0;  // latest host time seen (live: steady clock)
   double lastSave_ = 0;
@@ -330,6 +340,7 @@ bool SessionImpl::Start(std::string* error) {
   persist_ = options_.saveRoomMap && !roomPath_.empty();
   if (!roomPath_.empty() && !room_.Load(roomPath_, &err)) Emit(SessionEventType::Log, "", err);
   room_.SetFrozen(std::getenv("LH_EVALUATE_ROOM") != nullptr);
+  mixed_ = options_.mixedLight;
   settingsPath_ = options_.settingsPath.empty() && !replay ? DefaultSettingsPath() : options_.settingsPath;
   LoadSettings();
   for (const auto& serial : options_.disabledDevices) disabled_.insert(serial);
@@ -360,6 +371,7 @@ bool SessionImpl::Start(std::string* error) {
       if (frame != room_.OotxFrames().end()) identities_[serial] = {c.first, c.second, frame->second};
     }
     for (auto& text : room_.TakeLogs()) Emit(SessionEventType::Log, "", text);
+    UpdateMixedRoom();
   }
   stop_ = false;
   finished_ = false;
@@ -595,6 +607,7 @@ bool SessionImpl::SetUpDevice(const DeviceId& id, const std::string& config) {
     d.tracker->SetSmoothing(smoothPosition_, smoothRotation_);
     d.tracker->SetReportAcceleration(reportAcceleration_);
     d.tracker->SetHoldStill(d.info.role != DeviceRole::Hmd);  // a still head must not freeze the view
+    StartMixedLight(d);
     models_[id] = d.tracker->ImuModel();
     for (const auto& [serial, b] : bases_) d.tracker->OnBaseConfig(b.config, b.dynamic);
     PushIdentities();
@@ -672,6 +685,7 @@ void SessionImpl::OnDeviceDetached(const DeviceId& id) {
   auto found = devices_.find(id);
   if (found == devices_.end()) return;
   found->second.attached = false;
+  if (mixedActive_) found->second.lightMode = -1;  // a device starts in LH1 mode: choose again
   Emit(SessionEventType::DeviceDisconnected, id, id + " disconnected");
 }
 
@@ -698,6 +712,7 @@ void SessionImpl::OnImu(const DeviceId& id, const ImuSample& sample) {
   Touch(found->second, sample.time);
   found->second.tracker->OnImu(sample);
   Process(id, found->second);
+  UpdateMixedRoom();
   UpdateLightMode(id, found->second);
 }
 
@@ -709,9 +724,14 @@ void SessionImpl::OnImu(const DeviceId& id, const ImuSample& sample) {
 //    that sees nothing is occluded; re-send the mode now and then in case it was lost).
 //  * Otherwise (nothing seen yet, or a mixed room), a device without usable light for
 //    kDark seconds tries the other mode.
+// With 1.0 and 2.0 stations used together (MixedLightOptions), UpdateMixedLight decides instead.
 void SessionImpl::UpdateLightMode(const DeviceId& id, Device& d) {
   constexpr double kDark = 2.5, kResend = 5.0;
   if (!usb_ || !d.attached) return;
+  if (mixedActive_) {
+    UpdateMixedLight(id, d);
+    return;
+  }
   bool knownLh1 = false, knownLh2 = false, seenLh1 = false, seenLh2 = false;
   for (const auto& [serial, b] : bases_) {
     const bool lh2 = b.config.model != 1;
@@ -746,6 +766,43 @@ void SessionImpl::UpdateLightMode(const DeviceId& id, Device& d) {
   set(1 - d.lightMode, "no usable light");
 }
 
+// runtime/mixed_light.hpp: LH1 mode once the rotors in view are known, LH2 mode now and then to
+// time them again, and LH2 mode throughout for the kinds of device left out.
+void SessionImpl::UpdateMixedLight(const DeviceId& id, Device& d) {
+  constexpr double kCheckEvery = 0.05;  // s
+  constexpr double kCalmSpeed = 0.5, kCalmTurn = 2.0;  // m/s, rad/s
+  if (now_ < d.nextLightCheck) return;
+  d.nextLightCheck = now_ + kCheckEvery;
+  const auto out = d.tracker->Output();
+  if (out.state == TrackingState::Tracking) d.lastTracked = now_;
+  runtime::MixedLightView view;
+  view.mode = d.lightMode;
+  view.inMode = now_ - d.modeSince;
+  view.dark = now_ - std::max(d.lightMode == 1 ? d.lastBeam : d.lastPulse, d.modeSince);
+  view.sinceSent = now_ - d.modeSent;
+  view.stayLh2 = !runtime::MixesLight(d.info.role, mixed_);
+  for (const auto& rotor : d.tracker->Source().Rotors(d.lastBeamDeviceTime)) {
+    if (rotor.ready) ++view.readyRotors;
+    else if (rotor.hearing) ++view.learningRotors;
+    if (rotor.ready && rotor.hearing && d.tracker->Source().ChannelSerial(rotor.channel) == 0) ++view.unnamedRotors;
+  }
+  view.tracking = out.state == TrackingState::Tracking;
+  view.lost = now_ - d.lastTracked;
+  view.calm = !out.valid || (out.velocity.norm() < kCalmSpeed && out.angularVelocity.norm() < kCalmTurn);
+  const auto step = runtime::ChooseMixedLight(view, runtime::kVisitEvery);
+  if (step.mode < 0) return;
+  usb_->SetOpticalSubProtocol(id, step.mode);
+  d.modeSent = now_;
+  if (step.mode == d.lightMode) return;
+  char detail[192];
+  std::snprintf(detail, sizeof detail, " after %.1f s, dark %.1f, rotors ready %d learning %d unnamed %d, %s, lost %.1f, %s",
+                view.inMode, view.dark, view.readyRotors, view.learningRotors, view.unnamedRotors,
+                view.tracking ? "tracking" : "not tracking", std::min(view.lost, 999.0), view.calm ? "calm" : "moving");
+  Emit(SessionEventType::Log, id, id + ": light mode " + (step.mode ? "LH2" : "LH1") + " (" + step.why + ")" + (view.mode < 0 ? "" : detail));
+  d.lightMode = step.mode;
+  d.modeSince = now_;
+}
+
 void SessionImpl::OnLightPulse(const DeviceId& id, const LightPulse& pulse) {
   if (warming_) return;
   std::lock_guard lock(mutex_);
@@ -755,6 +812,7 @@ void SessionImpl::OnLightPulse(const DeviceId& id, const LightPulse& pulse) {
   if (found == devices_.end() || !found->second.tracker) return;
   Touch(found->second, pulse.time);
   if (pulse.width >= 56e-6 && pulse.width <= 140e-6) found->second.lastGoodLight = now_;  // a sync flash
+  found->second.lastPulse = now_;
   found->second.tracker->OnPulse(pulse);
 }
 
@@ -767,6 +825,8 @@ void SessionImpl::OnLh2BeamWord(const DeviceId& id, const Lh2BeamWord& word) {
   if (found == devices_.end() || !found->second.tracker) return;
   Touch(found->second, word.time);
   found->second.lastGoodLight = now_;
+  found->second.lastBeam = now_;
+  found->second.lastBeamDeviceTime = word.time;
   found->second.tracker->OnLh2BeamWord(word);
 }
 
@@ -1278,6 +1338,53 @@ void SessionImpl::SetOutputTuning(double positionSmoothing, double rotationSmoot
   Emit(SessionEventType::Log, "", text, LogLevel::Info);
 }
 
+// A new tracker, or one whose room changed: sorting as the room needs, and in a room of both
+// kinds a fresh choice of light mode, since it knows no rotors yet.
+void SessionImpl::StartMixedLight(Device& d) {
+  if (!d.tracker) return;
+  d.tracker->Source().SetSorting(mixedActive_);
+  if (mixedActive_) d.lightMode = -1;
+}
+
+// Both kinds together only where there's a 2.0 station to sort: one in the room in use, or seen this
+// session; before any base is seen (no room chosen yet), any the room map or SteamVR's database knows.
+// In a 1.0-only room the switch alone would send devices looking for rotors in LH2 mode and hold
+// back lhbs multi-station detection, and SteamVR's database often has 2.0 stations of other rooms.
+void SessionImpl::UpdateMixedRoom() {
+  const auto* room = room_.Active();
+  uint32_t lh2 = 0;
+  for (const auto& [serial, b] : bases_)
+    if (b.config.model != 1 && !lh2 && (!room || b.seen || room->bases.count(serial))) lh2 = serial;
+  const bool active = mixed_.enabled && lh2;
+  if (active == mixedActive_) return;
+  mixedActive_ = active;
+  for (auto& [id, d] : devices_) {
+    if (d.tracker) d.tracker->Source().SetSorting(active);
+    d.lightMode = -1;  // choose again, the usual way or the mixed one
+  }
+  char text[160];
+  if (active) std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: in use (2.0 base %08X known)", lh2);
+  else std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: not in use");
+  Emit(SessionEventType::Log, "", text, LogLevel::Info);
+}
+
+void SessionImpl::SetMixedLight(const MixedLightOptions& options) {
+  std::lock_guard lock(mutex_);
+  if (options == mixed_) return;
+  Tick();
+  for (auto& [id, d] : devices_) {
+    // Let in while in LH2 mode: as at the start of a visit, it waits for rotors still being
+    // learned or named, rather than leaving at once because it has been there long.
+    if (mixedActive_ && d.lightMode == 1 && runtime::MixesLight(d.info.role, options) && !runtime::MixesLight(d.info.role, mixed_))
+      d.modeSince = now_;
+  }
+  mixed_ = options;
+  auto onOff = [](bool on) { return on ? "on" : "off"; };
+  Emit(SessionEventType::Log, "", std::string("1.0 + 2.0 base stations together: switch ") + onOff(options.enabled) + " (controllers " +
+                                  onOff(options.controllers) + ", trackers " + onOff(options.trackers) + ")", LogLevel::Info);
+  UpdateMixedRoom();
+}
+
 void SessionImpl::SaveSettings() {
   if (settingsPath_.empty()) return;
   try {
@@ -1316,6 +1423,7 @@ void SessionImpl::SetDeviceEnabled(const std::string& serial, bool enabled) {
       d.tracker->SetSmoothing(smoothPosition_, smoothRotation_);
       d.tracker->SetReportAcceleration(reportAcceleration_);
       d.tracker->SetHoldStill(d.info.role != DeviceRole::Hmd);  // a still head must not freeze the view
+      StartMixedLight(d);
       for (const auto& [base, b] : bases_) d.tracker->OnBaseConfig(b.config, b.dynamic);
       PushIdentities();
     }
@@ -1348,6 +1456,7 @@ void SessionImpl::ResetRoomLocked(const std::string& why) {
     d.tracker->SetSmoothing(smoothPosition_, smoothRotation_);
     d.tracker->SetReportAcceleration(reportAcceleration_);
     d.tracker->SetHoldStill(d.info.role != DeviceRole::Hmd);  // a still head must not freeze the view
+    StartMixedLight(d);
     for (const auto& [base, b] : bases_) d.tracker->OnBaseConfig(b.config, b.dynamic);
     d.lastState = TrackingState::Disconnected;
   }

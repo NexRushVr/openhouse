@@ -4,12 +4,14 @@
 #pragma once
 
 #include <deque>
+#include <memory>
 #include <mutex>
 
 #include "lh/types.hpp"
 #include "tracking/disambiguator_multi.hpp"
 #include "tracking/disambiguator_sob.hpp"
 #include "tracking/disambiguator_tdm.hpp"
+#include "tracking/pulse_sorter.hpp"
 
 namespace lh {
 
@@ -37,6 +39,19 @@ class TrackingSource {
   bool PopIdentity(tdm::TdmDisambiguator::Identity* out);
   void SetKnownSobChannels(const std::map<int, std::pair<BaseConfig, BaseDynamicState>>& channels);
 
+  // Not stock, for rooms with both kinds of base station (ai/driver/mixed_stations.md): LH1
+  // pulses from 2.0 stations go down the LH2 path (PulseSorter), the rest down the LH1 path as
+  // usual. Off by default. While on, the sorter learns rotors from LH2 words, and lhbs
+  // multi-station detection waits (LH_MULTISTATION=on still forces it).
+  void SetSorting(bool on);
+  bool Sorting() const;
+  // Lets the tracker's pose help decide whose each pulse is, while sorting.
+  void SetPoseView(PulseSorter::PoseView view);
+  // The sorter's rotors; none while not sorting.
+  std::vector<PulseSorter::RotorState> Rotors(double now) const;
+  // The base on an LH2 channel, 0 while it isn't known.
+  uint32_t ChannelSerial(int channel) const;
+
  private:
   // The original stores float components, even though transport callbacks use doubles.
   struct QueuedImu {
@@ -47,10 +62,17 @@ class TrackingSource {
   mutable std::mutex mutex_;
   bool inferSensorType_ = true;
   tdm::TdmDisambiguator tdm_;
+  const tdm::MultiDisambiguator::Mode multiMode_;  // LH_MULTISTATION
   // Runs beside the stock disambiguator; takes over once it detects lhbs multi mode.
   tdm::MultiDisambiguator multi_;
   // LH2 light; a device reports either LH1 pulses or LH2 words (its light mode).
   sob::SobDisambiguator sob_;
+  // SetSorting. Before a device knows the rotors, 2.0 stations' pulses reach the LH1 path, and
+  // beside a lone 1.0 station they passed for an lhbs multi-station layout: multi_ waits.
+  std::unique_ptr<PulseSorter> sorter_;
+  PulseSorter::PoseView poseView_;
+  std::deque<OpticalFrame> pendingLh1_;  // LH1 frames waiting for older LH2 frames
+  bool UseMulti() const { return multi_.Active() && (!sorter_ || multiMode_ == tdm::MultiDisambiguator::Mode::On); }
   std::deque<QueuedImu> imu_;
   double latestImuTime_ = 0;
   double lastPulseImuTime_ = 0;

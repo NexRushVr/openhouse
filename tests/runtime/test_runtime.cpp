@@ -773,12 +773,13 @@ struct MsReplay {
   SessionSnapshot snapshot;
   std::vector<std::pair<double, bool>> valid;  // (t, valid) of one device, 100 Hz
 };
-MsReplay MsRun(const std::string& capture, const std::string& only, double to) {
+MsReplay MsRun(const std::string& capture, const std::string& only, double to, bool mixedLight = false) {
   const auto trace = (std::filesystem::temp_directory_path() / ("lh-test-ms-" + std::to_string(::getpid()) + ".jsonl")).string();
   SessionOptions options;
   options.replayPath = capture;
   options.replayRealtime = false;
   options.replayTo = to;
+  options.mixedLight.enabled = mixedLight;
   if (!only.empty()) options.replayOnly = {only};
   options.saveRoomMap = false;
   options.roomMapPath = (std::filesystem::temp_directory_path() / ("lh-test-ms-room-" + std::to_string(::getpid()) + ".json")).string();
@@ -829,6 +830,38 @@ TEST(MultiStation, DetectsDecodesAndTracks) {
   int n = 0, ok = 0;
   for (const auto& [t, v] : r.valid) if (t - start > 5) { ++n; ok += v; }
   EXPECT_GT(ok, 0.95 * n) << ok << "/" << n;
+}
+
+// The 1.0 + 2.0 switch on in a room with no 2.0 station (lhbs multi-station, whose SteamVR
+// database has a 2.0 station of another room): in use only until the room is known, and then
+// multi-station detection and tracking are as with it off (DetectsDecodesAndTracks).
+TEST(MixedLight, StandsDownInARoomWithout2Point0Stations) {
+  const std::string capture = TestCapture("ms-a/input.lhraw");
+  if (!std::filesystem::exists(capture)) GTEST_SKIP();
+  const auto r = MsRun(capture, "LHR-13DA81D1", 40, true);
+  std::string last;
+  for (const auto& e : r.events)
+    if (e.text.rfind("1.0 + 2.0 base stations together: ", 0) == 0) last = e.text;
+  EXPECT_EQ(last, "1.0 + 2.0 base stations together: not in use");
+  EXPECT_TRUE(MsHasEvent(r, "multi-station layout detected"));
+  ASSERT_FALSE(r.valid.empty());
+  const double start = r.valid.front().first;
+  int n = 0, ok = 0;
+  for (const auto& [t, v] : r.valid) if (t - start > 5) { ++n; ok += v; }
+  EXPECT_GT(ok, 0.95 * n) << ok << "/" << n;
+}
+
+// In a 2.0 room it's in use, and LH2 light alone (the recording's mode) tracks as before.
+TEST(MixedLight, InUseWith2Point0StationsAndLh2LightStillTracks) {
+  const std::string capture = TestCapture("lh2-one-controller/input.lhraw");
+  if (!std::filesystem::exists(capture)) GTEST_SKIP();
+  const auto r = MsRun(capture, "", 0, true);
+  EXPECT_TRUE(MsHasEvent(r, "1.0 + 2.0 base stations together: in use"));
+  ASSERT_FALSE(r.valid.empty());
+  const double start = r.valid.front().first;
+  int n = 0, ok = 0;
+  for (const auto& [t, v] : r.valid) if (t - start > 10) { ++n; ok += v; }
+  EXPECT_GT(ok, 0.97 * n) << ok << "/" << n;
 }
 
 // A stock 2-station room never switches to the multi-station layout.
