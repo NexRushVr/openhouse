@@ -8,6 +8,7 @@
 #include "openvr/host_frame.hpp"
 #include "openvr/haptic_routing.hpp"
 #include "openvr/telemetry_server.hpp"
+#include "openvr/basestation_power.hpp"
 #include "common/net.hpp"
 #include "lh/log_level.hpp"
 #include <chrono>
@@ -493,4 +494,28 @@ TEST(LogLevels, ClassifiesAndParses) {
   EXPECT_EQ(l, lh::LogLevel::Warn);
   EXPECT_FALSE(lh::ParseLogLevel("loud", &l));
   EXPECT_STREQ(lh::LogLevelName(lh::LogLevel::Error), "ERR");
+}
+
+// What the driver asks lhbase to do at SteamVR start and exit.
+TEST(BaseStationPower, Arguments) {
+  using lh::openvr::BaseStationPower;
+  using Strings = std::vector<std::string>;
+  lh::openvr::BaseStationPowerSettings settings;
+  EXPECT_EQ(BaseStationPower::WakeArguments({}, "l"), (Strings{"on", "--room", "--quiet", "--log", "l"}));
+  // A base switched off in SteamVR's power list is left alone at the start too.
+  EXPECT_EQ(BaseStationPower::WakeArguments({"lhb-2b3c4d5e"}, "l"),
+            (Strings{"on", "--room", "--except", "LHB-2B3C4D5E", "--quiet", "--log", "l"}));
+  // Nothing at exit unless asked: the bases may be shared.
+  EXPECT_TRUE(BaseStationPower::ExitArguments(settings, {"LHB-1A2B3C4D"}, {}, "l").empty());
+  // The room's (all of them were woken) and the bases seen, minus the switched-off ones.
+  settings.onExit = "sleep";
+  EXPECT_EQ(BaseStationPower::ExitArguments(settings, {"LHB-1A2B3C4D", "LHB-2B3C4D5E"}, {"LHB-2B3C4D5E"}, "l"),
+            (Strings{"sleep", "--room", "LHB-1A2B3C4D", "--except", "LHB-2B3C4D5E", "--quiet", "--log", "l"}));
+  settings.onExit = "standby";  // a quick exit before any base was seen
+  EXPECT_EQ(BaseStationPower::ExitArguments(settings, {}, {}, "l"), (Strings{"standby", "--room", "--quiet", "--log", "l"}));
+  settings.onExit = "none";
+  EXPECT_TRUE(BaseStationPower::ExitArguments(settings, {"LHB-1A2B3C4D"}, {}, "l").empty());
+  settings.onExit = "sleep";
+  settings.enabled = false;
+  EXPECT_TRUE(BaseStationPower::ExitArguments(settings, {"LHB-1A2B3C4D"}, {}, "l").empty());
 }

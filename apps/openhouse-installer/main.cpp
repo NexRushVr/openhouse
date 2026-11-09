@@ -7,10 +7,11 @@
 //   * install: keeps SteamVR's driver as driver_lighthouse.dll.stock whenever the one in
 //     place isn't openhouse's (a SteamVR update's newer one replaces an older backup),
 //     copies ours over it, the settings page schema, and the update check (an app SteamVR
-//     starts with every session: Steam's appconfig.json + vrappconfig);
+//     starts with every session: Steam's appconfig.json + vrappconfig), and lhbase (base
+//     station power) next to it;
 //   * uninstall: puts the backup back, unless a SteamVR update already put its own
-//     newer driver there (then the outdated backup goes instead), and removes the update
-//     check's files from %LOCALAPPDATA%\openhouse, not the folder: recordings live there.
+//     newer driver there (then the outdated backup goes instead), and removes its own
+//     files from %LOCALAPPDATA%\openhouse, not the folder: recordings live there.
 //
 //   openhouse-installer [--install | --uninstall | --status] [--steamvr PATH] [--yes]
 // Without an action it asks. Files are overwritten in place, retrying for a few seconds
@@ -42,7 +43,7 @@ constexpr const char* kMarker = "liblh session started";  // only openhouse's dr
 constexpr const char* kCheckKey = "openhouse.check";
 const wchar_t* kHosts[] = {L"steam.exe",       L"steamwebhelper.exe", L"vrserver.exe",  L"vrmonitor.exe",
                            L"vrcompositor.exe", L"vrdashboard.exe",    L"vrwebhelper.exe", L"vrstartup.exe",
-                           L"vrservice.exe",   L"monado-service.exe"};
+                           L"vrservice.exe",   L"monado-service.exe", L"lhbase.exe"};  // lhbase: a `watch` left running holds its exe
 
 struct Failure : std::runtime_error {
   using std::runtime_error::runtime_error;
@@ -266,6 +267,12 @@ void Install(const Paths& p) {
     WriteText(p.checkManifest, manifest.dump(2));
     SetCheckRegistration(p, true);
   }
+  // The driver starts lhbase from there for base station power (2.0 bases over Bluetooth).
+  const fs::path baseTool = p.here / "apps" / "lhbase.exe";
+  if (fs::exists(baseTool)) {
+    fs::create_directories(p.checkDir);
+    CopyOver(baseTool, p.checkDir / "lhbase.exe");
+  }
   std::cout << "Installed. Start SteamVR.\n";
 }
 
@@ -275,7 +282,7 @@ void Uninstall(const Paths& p) {
   SetCheckRegistration(p, false);
   // Only the files we put there: the folder is also the driver's data directory, with the
   // user's recordings (Record Session) in it.
-  for (const char* name : {"openhouse-check.exe", "openhouse-check.vrmanifest"}) RemoveFile(p.checkDir / name);
+  for (const char* name : {"openhouse-check.exe", "openhouse-check.vrmanifest", "lhbase.exe"}) RemoveFile(p.checkDir / name);
   std::error_code ec;
   fs::remove(p.checkDir, ec);  // only goes when nothing else is in it
   if (ReadFile(p.target).find(kMarker) == std::string::npos) {

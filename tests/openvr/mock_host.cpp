@@ -76,7 +76,12 @@ class Settings : public IVRSettings {
   bool GetBool(const char*, const char*, EVRSettingsError* e) override { if (e) *e = VRSettingsError_UnsetSettingHasNoDefault; return false; }
   int32_t GetInt32(const char*, const char*, EVRSettingsError* e) override { if (e) *e = VRSettingsError_UnsetSettingHasNoDefault; return 0; }
   float GetFloat(const char*, const char*, EVRSettingsError* e) override { if (e) *e = VRSettingsError_UnsetSettingHasNoDefault; return 0; }
-  void GetString(const char*, const char*, char* v, uint32_t n, EVRSettingsError* e) override { if (n) v[0] = 0; if (e) *e = VRSettingsError_UnsetSettingHasNoDefault; }
+  // LH_HOST_SETTING_<key>=value sets a string setting (any section), for live runs by hand.
+  void GetString(const char*, const char* key, char* v, uint32_t n, EVRSettingsError* e) override {
+    const char* value = std::getenv((std::string("LH_HOST_SETTING_") + key).c_str());
+    if (n) std::snprintf(v, n, "%s", value ? value : "");
+    if (e) *e = value ? VRSettingsError_None : VRSettingsError_UnsetSettingHasNoDefault;
+  }
   void RemoveSection(const char*, EVRSettingsError* e) override { if (e) *e = VRSettingsError_None; }
   void RemoveKeyInSection(const char*, const char*, EVRSettingsError* e) override { if (e) *e = VRSettingsError_None; }
 } g_settings;

@@ -171,6 +171,52 @@ inline void SleepFor(std::chrono::microseconds duration) {
 #endif
   std::this_thread::sleep_for(duration);
 }
+// Starts a helper program in the background, without a window, and doesn't wait for it:
+// it can outlive the host (the driver's lhbase calls at SteamVR exit). On Windows it
+// leaves the host's job object when the job allows that; when it doesn't, the helper
+// could be killed with the host, so this waits up to `waitIfTied` for it to finish.
+// Windows only for now (false elsewhere).
+inline bool RunInBackground(const std::string& program, const std::vector<std::string>& args,
+                            std::chrono::milliseconds waitIfTied = std::chrono::milliseconds(0)) {
+#ifdef _WIN32
+  // CommandLineToArgvW's quoting rules.
+  auto quote = [](const std::wstring& arg) {
+    if (!arg.empty() && arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) return arg;
+    std::wstring out = L"\"";
+    for (auto it = arg.begin();; ++it) {
+      size_t backslashes = 0;
+      while (it != arg.end() && *it == L'\\') { ++it; ++backslashes; }
+      if (it == arg.end()) { out.append(backslashes * 2, L'\\'); break; }
+      out.append(*it == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
+      out.push_back(*it);
+    }
+    out.push_back(L'"');
+    return out;
+  };
+  std::wstring command = quote(std::filesystem::path(program).wstring());
+  for (const auto& arg : args) command += L" " + quote(std::filesystem::path(arg).wstring());
+  STARTUPINFOW startup{};
+  startup.cb = sizeof startup;
+  PROCESS_INFORMATION process{};
+  const DWORD flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT;
+  bool tied = false;
+  if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, flags | CREATE_BREAKAWAY_FROM_JOB, nullptr,
+                      nullptr, &startup, &process)) {
+    tied = true;  // in a job that doesn't allow breaking away (or none was needed and this failed for another reason)
+    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, flags, nullptr, nullptr, &startup, &process))
+      return false;
+  }
+  if (tied && waitIfTied.count() > 0) WaitForSingleObject(process.hProcess, DWORD(waitIfTied.count()));
+  CloseHandle(process.hThread);
+  CloseHandle(process.hProcess);
+  return true;
+#else
+  (void)program;
+  (void)args;
+  (void)waitIfTied;
+  return false;
+#endif
+}
 inline bool VrserverRunning() {
 #ifdef _WIN32
   HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);

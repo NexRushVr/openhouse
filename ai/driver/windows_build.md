@@ -6,7 +6,7 @@
 
 * `build-win64/openvr/lighthouse/bin/win64/driver_lighthouse.dll`;
 * `apps/`: `liblh.dll`, `openhouse-viewer.exe`, `openhouse-compare.exe`, `lhviz.exe`,
-  `lhtool.exe`, `lhcapture.exe`, `openhouse-check.exe`; `openhouse-installer.exe` at the top;
+  `lhtool.exe`, `lhcapture.exe`, `openhouse-check.exe`, `lhbase.exe`; `openhouse-installer.exe` at the top;
 * `dist/openhouse-windows-x64.zip`: stripped binaries, `LICENSE.txt`, dependency notices
   (`licenses/`), `BUILD.json` (hashes), the settings page schema, and the installer.
 
@@ -88,7 +88,8 @@ to close Steam / SteamVR (they hold the DLL open), overwrites with retries, keep
 `driver_lighthouse.dll.stock` (needed for the headset display), verifies the installed
 hash, installs the settings page schema (an existing one is kept as `.stock`), and
 registers the update check (`openhouse-check.exe` in `%LOCALAPPDATA%\openhouse`,
-autolaunched overlay). SteamVR is found through OpenVR's runtime path file, then
+autolaunched overlay) and copies `lhbase.exe` next to it (the driver starts it for base
+station power). SteamVR is found through OpenVR's runtime path file, then
 Steam's registry path; `--steamvr` overrides. Whenever the installed DLL lacks the
 marker `liblh session started` it is SteamVR's (a newer one after an update) and becomes
 the backup. Uninstall reverses all of it, but keeps a newer SteamVR DLL over an old backup.

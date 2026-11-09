@@ -49,8 +49,9 @@ Goals and constraints (from the owner):
 | `src/runtime` | `Session`, `DeviceTracker` (improvements), room map and room solver |
 | `src/openvr` | the OpenVR driver (devices, inputs, skeleton, host frame, room publisher, stock HMD, pairing, telemetry server) |
 | `src/common` | small shared pieces (loopback sockets) |
-| `src/platform` | OS helpers (paths, precise sleep) |
-| `apps/` | `openhouse-viewer` (live status of the running driver, bug report button), `openhouse-compare` (openhouse vs the stock driver side by side; hosts the stock DLL in-process), `lhtool` (replay/session/track), `lhcapture` (recorder), `lhviz` (developer viewer), `openhouse-check` (update check), `example_app` (standalone CMake example for users of `lh::Session`) |
+| `src/platform` | OS helpers (paths, precise sleep, starting a helper in the background) |
+| `src/basestation` | 2.0 base stations over the PC's Bluetooth: power, channel, identify, info (`driver/basestation_power.md`); no tracking or USB dependency |
+| `apps/` | `openhouse-viewer` (live status of the running driver, bug report button), `openhouse-compare` (openhouse vs the stock driver side by side; hosts the stock DLL in-process), `lhtool` (replay/session/track), `lhcapture` (recorder), `lhviz` (developer viewer), `openhouse-check` (update check), `lhbase` (2.0 base station power/channel over Bluetooth), `example_app` (standalone CMake example for users of `lh::Session`) |
 | `tests/` | unit, runtime, OpenVR component/mock-host, oracle tests (load the original binary) |
 | `tools/` | `eval_replay.sh/.py` (tracking scorer) |
 | `scripts/` | Release builds (`build-linux.sh`, `build-windows.sh`, `build-firmware.sh`) and the packagers they call (`package-linux.sh`, `package-driver.py`, `package-windows.py`, `package-firmware.py`), the Windows installer script |
@@ -185,6 +186,7 @@ Open:
 * Runtime and host: `lh_runtime.md`, `runtime.md`, `interfaces.md`, `openvr_driver.md`,
   `windows_build.md`.
 * LH2: `lh2_support.md` (pipeline, results, open items). Research: `lh1_as_lh2_research.md`.
+  Base station power/channel over Bluetooth: `basestation_power.md`.
 
 `firmware/` (lhbs): `usage.md` (build, flash, console; end users: `basestation_firmware/installer`), `FIRMWARE_OVERVIEW.md`,
 `HARDWARE.md` (pin map, peripherals, verification log), `MULTISTATION.md` (TDM slots,

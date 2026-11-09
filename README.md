@@ -114,8 +114,21 @@ In SteamVR's settings there is an **openhouse** page (Settings > openhouse, you 
 - **Position smoothing** and **Rotation smoothing** are how long a tracking correction takes to show up, 60 ms by default. Lower means less delay, but small corrections can show up as tiny jumps. 0 turns it off.
 - **Record Session (disable to save)** records your devices' raw data while it's on. When you turn it off, it saves a bug report zip with that recording (see below). The recordings themselves stay in `~/.local/share/openhouse/recordings` on Linux and `%LOCALAPPDATA%\openhouse\recordings` on Windows.
 - **Reset room** throws away the learned room and learns it again from scratch. Use it if you moved your basestations around and the room doesn't fix itself. It turns itself back off.
+- **Base station power** wakes your 2.0 basestations when SteamVR starts, and **Base stations when SteamVR exits** picks what they do after: stay on (default), sleep or standby. See below.
 
 Changes apply while you play, within a second.
+
+### Base station power (2.0)
+SteamVR only turns 2.0 basestations on and off through an Index or Vive Pro headset's Bluetooth. With any other headset (Quest through Virtual Desktop, Beyond etc.) they just keep spinning until you unplug them. openhouse uses your PC's Bluetooth instead: the room's basestations wake up when SteamVR starts, and if you pick **Sleep** or **Standby** for **Base stations when SteamVR exits** they go to sleep when it exits (they're left on by default, like SteamVR does, since basestations can be shared with someone else's PC). Windows only for now.
+
+`lhbase` (next to `openhouse-viewer`) does the same by hand, and it works with SteamVR's own driver too:
+- `lhbase` lists the 2.0 basestations in range with their channel and power state
+- `lhbase on`, `lhbase standby`, `lhbase sleep` for the room's basestations, or name them like `lhbase sleep LHB-1A2B3C4D`
+- `lhbase identify LHB-1A2B3C4D` blinks its LED, `lhbase channel LHB-1A2B3C4D 5` changes its channel (it won't pick a channel another basestation in range is on)
+- `lhbase info` shows their firmware versions and the serial from the sticker
+- `lhbase watch` stays open and wakes/sleeps them with SteamVR, for when you're on SteamVR's own driver
+
+Standby only turns the lasers off and the motor keeps spinning, so it wakes instantly. Sleep stops the motor too, which takes about 12 seconds to spin back up. The room's basestations are the ones in openhouse's room map, or the ones in SteamVR's basestation list if you don't have a room yet. Basestations you turned off in SteamVR's basestation power settings are left alone. `--all` means every 2.0 basestation your PC's Bluetooth can hear, your neighbour's too, so name them if you're not alone.
 
 ### Environment variables
 You don't need any of these normally. On Linux, put them in SteamVR's launch options like `LH_LOG_LEVEL=DEBUG %command%`. On Windows, set them as system environment variables and restart Steam.
@@ -126,6 +139,8 @@ You don't need any of these normally. On Linux, put them in SteamVR's launch opt
 | `LH_TELEMETRY_PORT=N` | The port the viewer connects to (36840 by default, `0` turns it off) |
 | `LH_CAPTURE=DIR` | Records the whole session from the start into a folder (see Reporting a bug) |
 | `LH_NO_POWER_OFF_ON_EXIT=1` | Don't turn off devices when SteamVR exits, overrides SteamVR's setting |
+| `LH_NO_BASESTATION_POWER=1` | Don't wake or sleep 2.0 basestations over Bluetooth |
+| `LH_BASESTATION_TOOL=PATH` | Use another `lhbase` for that |
 | `LH_STOCK_HMD=1` / `LH_NO_STOCK_HMD=1` | Always/never load SteamVR's display driver for the headset |
 | `LH_STOCK_DRIVER=PATH` | Where SteamVR's original driver is, if it's not next to ours |
 | `LH_STOCK_ALL_DEVICES=1` | Let SteamVR's driver see every device, not only the headset. Not recommended as it causes issues with tracking |
@@ -155,6 +170,7 @@ You can also record without SteamVR with `lhcapture` (close SteamVR first). Whil
 - `lhcapture` records your devices' raw data.
 - `lhtool session FILE.lhraw` replays a recording through the whole tracking and prints what happened (`--trace OUT.jsonl` for every pose, `--from`/`--to` for a part of it). `lhtool stats` shows per device data rates, `lhtool haptics SERIAL` tests a controller's vibration, `lhtool configs DIR` saves every connected device's config to `DIR`.
 - `lhviz` is a 3D viewer that runs its own tracking without SteamVR, mostly for development or testing
+- `lhbase` controls 2.0 basestations over Bluetooth (power, channel, identify, firmware info)
 
 All of the tracking is in a C++ library (`liblh`), separate from the SteamVR driver, so you can use it in your own app without SteamVR: `lh::Session` (`include/lh/session.hpp`) opens the devices, tracks them and gives you their poses, inputs and the basestations. The tools above are built on it, so you can look at them to see how the library can be used.
 

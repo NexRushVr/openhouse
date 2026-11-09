@@ -55,4 +55,28 @@ TEST(Platform, ReplacesExistingFileWithoutDeletingItOnFailure) {
   EXPECT_EQ(text(), "new");
   fs::remove_all(dir);
 }
+
+#ifdef _WIN32
+// The driver starts lhbase this way: arguments with spaces and quotes arrive intact.
+TEST(Platform, RunsAHelperInTheBackground) {
+  namespace fs = std::filesystem;
+  wchar_t self[MAX_PATH]{};
+  ASSERT_GT(GetModuleFileNameW(nullptr, self, MAX_PATH), 0u);
+  const auto dir = fs::temp_directory_path() / ("lh run & 'spaced' " + std::to_string(lh::platform::ProcessId()));
+  fs::create_directories(dir);
+  const auto out = dir / "list.json";
+  // This test binary again: it only lists the tests into `out`.
+  ASSERT_TRUE(lh::platform::RunInBackground(fs::path(self).string(),
+                                            {"--gtest_list_tests", "--gtest_filter=Platform.*", "--gtest_output=json:" + out.string()}));
+  for (int i = 0; i < 200 && !fs::exists(out); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  ASSERT_TRUE(fs::exists(out));
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  std::ifstream f(out);
+  std::ostringstream s;
+  s << f.rdbuf();
+  EXPECT_NE(s.str().find("RunsAHelperInTheBackground"), std::string::npos);
+  f.close();
+  fs::remove_all(dir);
+}
+#endif
 }

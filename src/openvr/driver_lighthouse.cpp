@@ -57,6 +57,8 @@ constexpr const char* kStockFile = "driver_lighthouse.so.stock";
 #include "lh/bug_report.hpp"
 #include "host_frame.hpp"
 #include "haptic_routing.hpp"
+#include "basestation_power.hpp"
+#include "basestation/protocol.hpp"
 #include <set>
 #include "platform/platform.hpp"
 #include <ctime>
@@ -811,7 +813,15 @@ class Provider : public IServerTrackedDeviceProvider {
       session_.reset();
       return VRInitError_Init_HmdNotFound;
     }
+    // 2.0 base stations' power over the PC's Bluetooth (basestation_power.hpp): live
+    // sessions under SteamVR on Windows only. Not replays, and not Monado: its settings
+    // are read with GetString, which older steamvr_lh hosts abort on (see "capture").
+#ifdef _WIN32
+    basePowerLive_ = options.replayPath.empty() && steamvr && !std::getenv("LH_NO_BASESTATION_POWER");
+#endif
     ApplyTuning(true);
+    if (basePowerLive_)
+      basePower_.OnStart(basePowerSettings_, BasesSwitchedOffInSteamVr(), [](const std::string& text) { Log(text); });
     Log("openhouse " + std::string(lh::kVersion) + ": liblh session started (" + std::string(options.replayPath.empty() ? "live USB" : "replay " + options.replayPath) +
         "); head-mounted displays: tracked by us, displayed through the stock driver when one is present");
     Log(std::string("input components through ") +
@@ -890,6 +900,16 @@ class Provider : public IServerTrackedDeviceProvider {
     stop_ = true;
     if (thread_.joinable()) thread_.join();
     if (reportThread_.joinable()) reportThread_.join();  // a report being saved finishes first
+    // 2.0 base stations at exit: what to tell lhbase, taken after the loop thread is gone
+    // (it updates the settings) while the session still answers. Started at the very end.
+    std::vector<std::string> basePowerExit;
+    if (session_ && basePowerLive_) {
+      std::vector<std::string> seen;
+      for (const auto& b : session_->Snapshot().bases)
+        if (b.lh2 && b.seen) seen.push_back(b.serial);
+      basePowerExit = lh::openvr::BaseStationPower::ExitArguments(basePowerSettings_, seen, BasesSwitchedOffInSteamVr(),
+                                                                  lh::openvr::BaseStationPower::LogPath());
+    }
     g_telemetry.Stop();
     if (session_) session_->Stop();
     session_.reset();
@@ -904,6 +924,9 @@ class Provider : public IServerTrackedDeviceProvider {
     loggedHaptic_.clear();
     loggedUnrouted_ = false;
     stock_.Cleanup();
+    // Last: where the host's job won't let lhbase outlive it, this waits for it, and
+    // nothing of ours should wait behind that.
+    if (!basePowerExit.empty()) basePower_.Run(basePowerExit, true, [](const std::string& text) { Log(text); });
     VR_CLEANUP_SERVER_DRIVER_CONTEXT();
   }
 
@@ -1149,6 +1172,20 @@ class Provider : public IServerTrackedDeviceProvider {
   std::string recording_;  // the settings page's recording, while on
   std::thread reportThread_;  // saving a bug report
   std::atomic<bool> reportDone_{true};
+  lh::openvr::BaseStationPower basePower_;
+  lh::openvr::BaseStationPowerSettings basePowerSettings_;
+  bool basePowerLive_ = false;
+
+  // The bases switched off in SteamVR's own base station power list: left alone.
+  static std::vector<std::string> BasesSwitchedOffInSteamVr() {
+    std::vector<std::string> off;
+    char list[8192]{};
+    EVRSettingsError e = VRSettingsError_None;
+    if (VRSettings()) VRSettings()->GetString("driver_lighthouse", "PowerManagedBaseStations2", list, sizeof list, &e);
+    for (const auto& entry : lh::basestation::ParseManagedList(list))
+      if (!entry.managed) off.push_back(entry.serial);
+    return off;
+  }
 
   // The bug report zip (lh/bug_report.hpp) with this recording, off the host thread.
   void SaveReport(const std::string& recording) {
@@ -1214,6 +1251,19 @@ class Provider : public IServerTrackedDeviceProvider {
       if (writeDefaults) VRSettings()->SetBool(kSection, key, fallback);
       return fallback;
     };
+    auto text = [&](const char* key, const char* fallback) {
+      EVRSettingsError e = VRSettingsError_None;
+      char value[64]{};
+      VRSettings()->GetString(kSection, key, value, sizeof value, &e);
+      if (e == VRSettingsError_None) return std::string(value);
+      if (writeDefaults) VRSettings()->SetString(kSection, key, fallback);
+      return std::string(fallback);
+    };
+    // Base stations: wake with SteamVR, and what they do when it exits (read at exit).
+    if (basePowerLive_) {
+      basePowerSettings_.enabled = flag("baseStationPower", true);
+      basePowerSettings_.onExit = text("baseStationPowerOff", "none");
+    }
     const double position = number("positionSmoothingMs", 60) / 1000.0;
     const double rotation = number("rotationSmoothingMs", 60) / 1000.0;
     const bool acceleration = flag("predictWithAcceleration", true);

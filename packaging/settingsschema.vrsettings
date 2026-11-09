@@ -40,6 +40,35 @@
                 "control": "toggle",
                 "label": "Reset room (relearns every base station)",
                 "show_without_hmd": true
+            },
+            {
+                "name": "/settings/driver_openhouse/baseStationPower",
+                "control": "toggle",
+                "label": "Base station power: wake 2.0 base stations when SteamVR starts (PC Bluetooth)",
+                "show_without_hmd": true
+            },
+            {
+                "name": "/settings/driver_openhouse/baseStationPowerOff",
+                "control": "select",
+                "label": "Base stations when SteamVR exits",
+                "options": [
+                    {
+                        "value": "none",
+                        "label": "Leave them on"
+                    },
+                    {
+                        "value": "sleep",
+                        "label": "Sleep (motor off)"
+                    },
+                    {
+                        "value": "standby",
+                        "label": "Standby (lasers off, motor keeps spinning)"
+                    }
+                ],
+                "requires": {
+                    "/settings/driver_openhouse/baseStationPower": true
+                },
+                "show_without_hmd": true
             }
         ]
     }

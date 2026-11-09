@@ -72,6 +72,16 @@ if(WIN32)
 endif()
 install(TARGETS lh_common EXPORT lighthouseTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
+# ---- lh_basestation: 2.0 base stations over the PC's Bluetooth (power, channel) --
+# No tracking or USB: lhbase, the viewer and the tests use it; the driver starts lhbase.
+add_library(lh_basestation STATIC src/basestation/protocol.cpp src/basestation/targets.cpp
+  src/basestation/manager.cpp src/basestation/radio_winrt.cpp)
+set_target_properties(lh_basestation PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_features(lh_basestation PUBLIC cxx_std_20)
+target_include_directories(lh_basestation PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_link_libraries(lh_basestation PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
+
 add_library(lh_tracking
   src/tracking/lighthouse_model.cpp
   src/tracking/ootx.cpp
@@ -172,6 +182,14 @@ if(LH_BUILD_USB)
   endif()
 endif()
 
+if(LH_BUILD_TOOLS AND WIN32)
+  # Base station power/channel over Bluetooth; the installer puts it next to openhouse-check.
+  # Windows only until lh_basestation has a radio for the other platforms.
+  add_executable(lhbase apps/lhbase/main.cpp)
+  target_link_libraries(lhbase PRIVATE lh_basestation)
+  install(TARGETS lhbase RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
 # ---- liblh: the session runtime (shared room map, devices, input) -------------
 add_library(lh_runtime OBJECT
   src/runtime/room_map.cpp
@@ -215,7 +233,7 @@ endif()
 option(LH_BUILD_OPENVR_DRIVER "Build the drop-in driver_lighthouse.so" ON)
 find_path(OPENVR_INCLUDE_DIR openvr_driver.h PATH_SUFFIXES openvr)
 if(LH_BUILD_OPENVR_DRIVER AND LH_BUILD_USB AND OPENVR_INCLUDE_DIR)
-  add_library(driver_lighthouse MODULE src/openvr/driver_lighthouse.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/stock_hmd.cpp src/openvr/pairing_mailbox.cpp src/openvr/telemetry_server.cpp $<TARGET_OBJECTS:lh_runtime>)
+  add_library(driver_lighthouse MODULE src/openvr/driver_lighthouse.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/stock_hmd.cpp src/openvr/pairing_mailbox.cpp src/openvr/telemetry_server.cpp src/openvr/basestation_power.cpp $<TARGET_OBJECTS:lh_runtime>)
   if(WIN32)
     target_link_libraries(driver_lighthouse PRIVATE setupapi hid)  # stock_hmd: hiding devices from the stock DLL
     set(LH_OPENVR_PLATFORM win64)
@@ -228,7 +246,7 @@ if(LH_BUILD_OPENVR_DRIVER AND LH_BUILD_USB AND OPENVR_INCLUDE_DIR)
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/openvr/lighthouse/bin/${LH_OPENVR_PLATFORM}
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/openvr/lighthouse/bin/${LH_OPENVR_PLATFORM})
   target_include_directories(driver_lighthouse PRIVATE include src ${OPENVR_INCLUDE_DIR})
-  target_link_libraries(driver_lighthouse PRIVATE lh_report lh_tracking lh_usb Ceres::ceres Eigen3::Eigen nlohmann_json::nlohmann_json)
+  target_link_libraries(driver_lighthouse PRIVATE lh_report lh_tracking lh_usb lh_basestation Ceres::ceres Eigen3::Eigen nlohmann_json::nlohmann_json)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   find_program(PATCHELF_EXECUTABLE patchelf)
   if(NOT WIN32 AND NOT APPLE AND Python3_Interpreter_FOUND AND PATCHELF_EXECUTABLE)
@@ -291,9 +309,10 @@ if(LH_BUILD_TESTS)
     tests/unit/test_tracking_source.cpp
     tests/unit/test_pose_solver.cpp
     tests/unit/test_tracker.cpp
-    tests/unit/test_disambiguator_sob.cpp)
+    tests/unit/test_disambiguator_sob.cpp
+    tests/unit/test_basestation.cpp)
   target_include_directories(lh_unit_tests PRIVATE src)
-  target_link_libraries(lh_unit_tests PRIVATE lh_tracking GTest::gtest_main)
+  target_link_libraries(lh_unit_tests PRIVATE lh_tracking lh_basestation GTest::gtest_main)
   if(WIN32)
     target_link_libraries(lh_unit_tests PRIVATE advapi32)
   endif()
@@ -309,10 +328,10 @@ if(LH_BUILD_TESTS)
   endif()
   add_test(NAME unit COMMAND lh_unit_tests)
   if(TARGET driver_lighthouse)
-    add_executable(lh_openvr_component_tests tests/openvr/test_components.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/telemetry_server.cpp)
+    add_executable(lh_openvr_component_tests tests/openvr/test_components.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/telemetry_server.cpp src/openvr/basestation_power.cpp)
     target_include_directories(lh_openvr_component_tests PRIVATE src tests ${OPENVR_INCLUDE_DIR})
     target_compile_definitions(lh_openvr_component_tests PRIVATE LH_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-    target_link_libraries(lh_openvr_component_tests PRIVATE lh lh_tracking Eigen3::Eigen nlohmann_json::nlohmann_json GTest::gtest_main)
+    target_link_libraries(lh_openvr_component_tests PRIVATE lh lh_tracking lh_basestation Eigen3::Eigen nlohmann_json::nlohmann_json GTest::gtest_main)
     add_test(NAME openvr_components COMMAND lh_openvr_component_tests)
     find_library(OPENVR_API_LIBRARY openvr_api)
     if(OPENVR_API_LIBRARY)
@@ -381,7 +400,8 @@ foreach(entry
     "openhouse-viewer|openhouse viewer"
     "openhouse-compare|openhouse and SteamVR driver comparison"
     "lhviz|openhouse developer viewer"
-    "openhouse-installer|openhouse driver installer")
+    "openhouse-installer|openhouse driver installer"
+    "lhbase|openhouse base station tool")
   string(REPLACE "|" ";" parts "${entry}")
   list(GET parts 0 name)
   list(GET parts 1 text)
