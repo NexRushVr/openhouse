@@ -259,3 +259,28 @@ TEST(MixedLight, SwitchedOffInLh1GoesToLh2AtOnce) {
   EXPECT_EQ(step.mode, 1);
   EXPECT_EQ(std::string(step.why), "stays in LH2");
 }
+
+// The original Vive headset, Vive wands, the 2017 Vive Tracker: no LH2 mode, so told to go there
+// they keep sending LH1 pulses, and never a beam word.
+TEST(MixedLight, TellsA1Point0OnlyDeviceApart) {
+  using lh::runtime::LooksLh1Only;
+  MixedLightView v;
+  v.mode = 1;
+  v.inMode = 8.0;
+  v.lh1Pulses = true;
+  EXPECT_TRUE(LooksLh1Only(v));
+  v.inMode = 7.9;
+  EXPECT_FALSE(LooksLh1Only(v)) << "not before the command was sent again";
+  v.inMode = 30.0;
+  v.everLh2 = true;
+  EXPECT_FALSE(LooksLh1Only(v)) << "it has sent 2.0 light: the command was lost, the device can";
+  v.everLh2 = false;
+  v.lh1Pulses = false;
+  EXPECT_FALSE(LooksLh1Only(v)) << "dark in LH2 mode: no 2.0 station in view, or one waking";
+  v.lh1Pulses = true;
+  v.mode = 0;
+  EXPECT_FALSE(LooksLh1Only(v)) << "in LH1 mode, LH1 pulses are what every device sends";
+  v.mode = 1;
+  v.stayLh2 = true;  // a headset
+  EXPECT_TRUE(LooksLh1Only(v));
+}

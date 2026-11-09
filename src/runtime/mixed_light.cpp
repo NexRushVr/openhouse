@@ -18,6 +18,7 @@ constexpr double kNoRotorsRetry = 15.0;  // s in LH1 mode knowing no rotors, bef
 constexpr double kLostBeforeHelp = 1.0;  // s lost in LH1 mode: leaves time to recover where it is
 constexpr double kMinLh1 = 3.0;       // s in LH1 mode before going back because lost
 constexpr double kOverdueFactor = 2;  // a visit goes ahead after this many intervals, calm or not
+constexpr double kLh1OnlyAfter = 8.0; // s in LH2 mode still sending LH1 pulses: it can't do LH2 mode
 constexpr double kScoutHold = 20.0;   // s the last rate is kept without the scout's period (offline: holes
                                       // over 20 s were where it went wrong)
 constexpr double kScoutMaxChange = 3e-6;  // a period this far off is a bad fit, not the rotor
@@ -85,5 +86,7 @@ MixedLightStep ChooseMixedLight(const MixedLightView& v, double visitEvery) {
   if (visitEvery > 0 && v.inMode >= visitEvery && (v.calm || v.inMode >= visitEvery * kOverdueFactor)) return {1, "visit"};
   return {};
 }
+
+bool LooksLh1Only(const MixedLightView& v) { return v.mode == 1 && v.inMode >= kLh1OnlyAfter && v.lh1Pulses && !v.everLh2; }
 
 }  // namespace lh::runtime
