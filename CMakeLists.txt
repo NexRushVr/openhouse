@@ -256,8 +256,26 @@ install(TARGETS lh EXPORT lighthouseTargets LIBRARY DESTINATION ${CMAKE_INSTALL_
 # ---- lhviz: 3D visualizer on top of liblh ---------------------------------------
 if(LH_BUILD_VIEWER)
   find_package(glfw3 QUIET)
+  # Some distributions ship GLFW without its CMake package (only glfw3.pc): find it there.
+  if(NOT TARGET glfw)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(LH_GLFW QUIET IMPORTED_TARGET glfw3)
+      if(LH_GLFW_FOUND)
+        add_library(glfw INTERFACE IMPORTED)
+        target_link_libraries(glfw INTERFACE PkgConfig::LH_GLFW)
+      endif()
+    endif()
+  endif()
   find_package(OpenGL QUIET)
-  if(TARGET glfw AND OpenGL_FOUND)
+  if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui.cpp)
+    set(LH_VIEWER_MISSING "Dear ImGui (third_party/imgui is missing from the source tree)")
+  elseif(NOT TARGET glfw)
+    set(LH_VIEWER_MISSING "GLFW 3 (install its development package, e.g. glfw-devel / libglfw3-dev / glfw)")
+  elseif(NOT OpenGL_FOUND)
+    set(LH_VIEWER_MISSING "OpenGL (install its development package, e.g. mesa-libGL-devel / libgl-dev)")
+  endif()
+  if(NOT LH_VIEWER_MISSING)
     add_library(lh_imgui STATIC
       third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
       third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_glfw.cpp
@@ -282,7 +300,8 @@ if(LH_BUILD_VIEWER)
       install(TARGETS openhouse-compare RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     endif()
   else()
-    message(STATUS "GLFW/OpenGL not found: skipping lhviz")
+    message(WARNING "LH_BUILD_VIEWER is on, but ${LH_VIEWER_MISSING} wasn't found: lhviz, openhouse-viewer "
+                    "and openhouse-compare are not built. Install it, or configure with -DLH_BUILD_VIEWER=OFF.")
   endif()
 endif()
 
