@@ -170,16 +170,23 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
   ignored once they show themselves (above). The detection worked live on a Vive wand; an original Vive
   headset, which would then lose tracking, wasn't at hand.
 * With the switch off, master's light-mode choice runs, and in a room of both kinds it puts devices in LH1
-  mode unsorted, starving the others (above); a 1.0-only device does that whatever the switch says.
+  mode unsorted, starving the others (above). So with the switch off a 1.0-only device turned on there
+  breaks the headset's tracking, as it does on master; with it on, it's ignored once detected (live: the
+  headset recovered within a few seconds of turning a wand on).
 * Trackers, several 1.0 stations, sync cables and lhbs multi-station alongside 2.0 stations: untested.
 * Hard swings from a cold start are less reliable than in LH2 mode (above).
 * A rotor needs a visit with its station in view before its hits can be used.
 * Replays don't exercise the light-mode choice: a recording's modes are fixed.
 * Meant for rooms with both kinds. It's in use only where there's a 2.0 station to sort
-  (`Session::UpdateMixedRoom`): one in the room in use, or seen this session; before any base is seen
-  and no room is chosen, any 2.0 station the room map or SteamVR's database knows. So in a 1.0-only room
-  it stands down once the room is known (SteamVR's database often has 2.0 stations of other rooms, as the
-  `ms-a` test capture's does; `MixedLight.StandsDownInARoomWithout2Point0Stations`). In a 2.0-only room it
-  still sorts, with visits and their dropouts, for nothing gained.
-* 2.0 stations neither SteamVR nor openhouse has seen, beside a 1.0 station in view, are never found:
-  devices stay in LH1 mode, as they do without this. Turning the 1.0 station off once lets them be.
+  (`Session::UpdateMixedRoom`): one in the room in use, or seen this session. Before any base is seen no
+  room is chosen, and it isn't in use either: SteamVR's database often has 2.0 stations of other rooms (the
+  `ms-a` test capture's does), and in a 1.0-only room devices would otherwise start in LH2 mode, where no
+  1.0 station can be seen, and wait 30 s for 2.0 stations to wake. So in a 1.0-only room it should never be
+  in use (`MixedLight.NeverInUseInARoomWithout2Point0Stations`, a replay of an lhbs multi-station room).
+  That's a replay, which doesn't run the light-mode choice: no 1.0-only setup has run this live. Off, the
+  default, a 1.0-only setup gets the same poses as on master, byte for byte. In a 2.0-only room it still
+  sorts, with visits and their dropouts, for nothing gained.
+* The first time, a room needs a 2.0 station seen, or in the room openhouse has, before this is in use. If
+  the room in use was learned without them, devices beside a lit 1.0 station stay in LH1 mode and never see
+  the 2.0 stations, as on master. Turning the 1.0 station off once lets them be seen; after that the room
+  has both.
