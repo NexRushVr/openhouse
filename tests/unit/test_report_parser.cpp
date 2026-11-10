@@ -158,3 +158,77 @@ TEST(Wv2Decoder, AnyShortPacketDecodesWithinItsBytes) {
   }
   SUCCEED();
 }
+
+namespace {
+struct InputRecorder : Recorder {
+  std::vector<lh::InputReport> inputs;
+  void OnInput(const lh::DeviceId&, const lh::InputReport& r) override { inputs.push_back(r); }
+};
+}  // namespace
+
+TEST(ButtonsParser, RepacksWiredBitsIntoTheRadioLayout) {
+  auto dev = std::make_shared<lh::usb::DeviceState>();
+  dev->id = "LHR-T";
+  InputRecorder rec;
+  lh::usb::ButtonsReportParser p(dev, &rec);
+  uint8_t r[64] = {0x01, 0x00, 0x01};  // report 1, type 0x0100: user input
+  // power/system (13), grip (2), menu (12), thumb = trackpad click (18), trigger (0)
+  Put<uint32_t>(r + 8, (1u << 13) | (1u << 2) | (1u << 12) | (1u << 18) | (1u << 0));
+  Put<uint16_t>(r + 0x1a, 0x4000);
+  ASSERT_TRUE(p.Parse(0, r, sizeof r));
+  ASSERT_EQ(rec.inputs.size(), 1u);
+  const auto& in = rec.inputs[0];
+  EXPECT_EQ(in.buttons, 0x01 | 0x04 | 0x08 | 0x10 | 0x20);  // trigger, pad click, system, grip, menu
+  EXPECT_EQ(in.trigger, 255);  // clicked: full
+  Put<uint32_t>(r + 8, 0);
+  ASSERT_TRUE(p.Parse(0, r, sizeof r));
+  EXPECT_EQ(rec.inputs[1].buttons, 0);
+  EXPECT_EQ(rec.inputs[1].trigger, 0x4000 >> 7);
+}
+
+TEST(ButtonsParser, ReadsBatteryAndIgnoresOtherReports) {
+  auto dev = std::make_shared<lh::usb::DeviceState>();
+  dev->id = "LHR-T";
+  InputRecorder rec;
+  lh::usb::ButtonsReportParser p(dev, &rec);
+  uint8_t battery[64] = {0x01, 0x00, 0x04};
+  battery[14] = 0x80 | 57;
+  EXPECT_TRUE(p.Parse(0, battery, sizeof battery));
+  ASSERT_EQ(rec.batteries.size(), 1u);
+  EXPECT_EQ(rec.batteries[0].raw, 0x80 | 57);
+  uint8_t other[64] = {0x02, 0x00, 0x01};
+  EXPECT_FALSE(p.Parse(0, other, sizeof other));
+  uint8_t shortInput[8] = {0x01, 0x00, 0x01};
+  p.Parse(0, shortInput, sizeof shortInput);
+  EXPECT_TRUE(rec.inputs.empty());
+}
+
+// A report read from an Index controller on USB (LHR-13DA81D1), thumbstick touched and pushed.
+TEST(ButtonsParser, ReadsTheIndexControllersStateReport) {
+  auto dev = std::make_shared<lh::usb::DeviceState>();
+  dev->id = "LHR-I";
+  InputRecorder rec;
+  lh::usb::ButtonsReportParser p(dev, &rec);
+  uint8_t r[64] = {0x01, 0x00, 0x07, 0x3c, 0x24};
+  Put<uint32_t>(r + 8, (1u << 2) | (1u << 18));  // A, thumbstick click
+  r[12] = 200;                                    // trigger
+  Put<int16_t>(r + 16, 12000);
+  Put<int16_t>(r + 18, -9000);
+  const uint8_t a1[8] = {0xa1, 0x40 | 0x10, 10, 20, 30, 40, 50, 60};
+  std::memcpy(r + 20, a1, 8);
+  ASSERT_TRUE(p.Parse(0, r, sizeof r));
+  ASSERT_EQ(rec.inputs.size(), 1u);
+  const auto& in = rec.inputs[0];
+  EXPECT_EQ(in.buttons, 0x04 | 0x10);  // stick click, A in the radio's layout
+  EXPECT_EQ(in.trigger, 200);
+  EXPECT_EQ(in.axisX, 12000);
+  EXPECT_EQ(in.axisY, -9000);
+  ASSERT_TRUE(in.hasExtended);
+  EXPECT_EQ(in.extended[0], 0xa1);
+  EXPECT_EQ(in.extended[1], 0x50);
+  EXPECT_EQ(in.extended[7], 60);
+  // A wand's or tracker's 0x0700 (a counter, no record) is not input.
+  uint8_t counter[64] = {0x01, 0x00, 0x07, 0x3c, 0x25};
+  EXPECT_TRUE(p.Parse(0, counter, sizeof counter));
+  EXPECT_EQ(rec.inputs.size(), 1u);
+}

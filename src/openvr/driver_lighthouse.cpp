@@ -229,6 +229,7 @@ class Device : public ITrackedDeviceServerDriver {
     container_ = VRProperties()->TrackedDeviceToPropertyContainer(objectId);
     SetProperties();
     if (info_.role == lh::DeviceRole::Controller) CreateInputs();
+    else if (info_.role == lh::DeviceRole::Tracker && HtcTracker()) CreateTrackerInputs();
     active_ = true;
     return VRInitError_None;
   }
@@ -388,10 +389,10 @@ class Device : public ITrackedDeviceServerDriver {
       VRProperties()->SetFloatProperty(container_, Prop_DeviceBatteryPercentage_Float, float(battery_) / 100.0f);
       VRProperties()->SetBoolProperty(container_, Prop_DeviceIsCharging_Bool, charging_);
     }
-    if (info_.role == lh::DeviceRole::Controller) {
+    if (info_.role == lh::DeviceRole::Controller || (info_.role == lh::DeviceRole::Tracker && HtcTracker())) {
       if (u.input && p.deviceIsConnected) { UpdateInputs(*u.input, now); hadInput_ = true; }
       else if (hadInput_) { lh::ControllerInput neutral; neutral.hostTime = now; UpdateInputs(neutral, now); hadInput_ = false; }
-      if (now - lastSkeletonSent_ >= kSkeletonInterval) SendSkeleton(now);
+      if (info_.role == lh::DeviceRole::Controller && now - lastSkeletonSent_ >= kSkeletonInterval) SendSkeleton(now);
     }
   }
 
@@ -540,12 +541,12 @@ class Device : public ITrackedDeviceServerDriver {
         props->SetFloatProperty(c, Prop_TrackingRangeMaximumMeters_Float, 7.0f);
         break;
       }
-      default: {  // trackers (inputs ignored by design)
+      default: {  // trackers (HTC's: inputs from CreateTrackerInputs)
         // As the stock driver (0x1cf860, 0x1d69f0): an HTC tracker gets HTC's profile and
         // type, and "vr_tracker_vive_1_0" becomes {htc}vr_tracker_vive_3_0 on a 3.0. Any
         // other maker's (Tundra Labs) keeps its own resource root, profile and icons
         // (#29, #40): they were all HTC's.
-        const bool htc = info_.manufacturer.empty() || EqualsNoCase(info_.manufacturer, "htc");
+        const bool htc = HtcTracker();
         const std::string root = htc || info_.resourceRoot.empty() ? "htc" : info_.resourceRoot;
         std::string renderModel = info_.renderModel.empty() ? "{htc}vr_tracker_vive_1_0" : info_.renderModel;
         // (RenderModel() has already put {htc} in front of a bare name.)
@@ -583,6 +584,34 @@ class Device : public ITrackedDeviceServerDriver {
     GripTouch, GripValue, GripForce, StickClick, StickTouch, StickX, StickY, PadTouch, PadX, PadY, PadForce,
     FingerIndex, FingerMiddle, FingerRing, FingerPinky, PadClick, GripClick, MenuClick, InputCount
   };
+
+  bool HtcTracker() const { return info_.manufacturer.empty() || EqualsNoCase(info_.manufacturer, "htc"); }
+
+  // An HTC tracker's inputs, as {htc}/input/vive_tracker_profile.json names them. The stock
+  // driver (0x3f78a0, case 3) maps the wand's buttons onto them: system -> power, trackpad
+  // click -> thumb; menu, grip and trigger keep their names. The pogo pins drive grip
+  // (pin 3), trigger (pin 4), thumb (pin 5) and menu (pin 6).
+  void CreateTrackerInputs() {
+    auto* in = ComponentInput();
+    const PropertyContainerHandle_t c = container_;
+    auto created = [&](Input i, const char* path, EVRInputError e) {
+      paths_[i] = path;
+      if (e != VRInputError_None) Log(info_.serial + ": creating " + path + " failed, error " + std::to_string(int(e)));
+    };
+    auto b = [&](Input i, const char* path) {
+      isBool_[i] = true;
+      created(i, path, in->CreateBooleanComponent(c, path, &handles_[i]));
+    };
+    b(SystemClick, "/input/power/click");
+    b(MenuClick, "/input/application_menu/click");
+    b(GripClick, "/input/grip/click");
+    b(TriggerClick, "/input/trigger/click");
+    created(TriggerValue, "/input/trigger/value",
+            in->CreateScalarComponent(c, "/input/trigger/value", &handles_[TriggerValue], VRScalarType_Absolute,
+                                      VRScalarUnits_NormalizedOneSided));
+    b(PadClick, "/input/thumb/click");
+    in->CreateHapticComponent(c, "/output/haptic", &haptic_);
+  }
 
   void CreateInputs() {
     auto* in = ComponentInput();
@@ -868,18 +897,23 @@ class Provider : public IServerTrackedDeviceProvider {
     const bool noStock = StockHmdUnwanted(&unwanted);
     Presence presence = noStock ? Presence::No : lh::openvr::StockHmd::HeadsetPresent(&which, &maybe);
     if (noStock && unwanted != "LH_NO_STOCK_HMD") Log("lighthouse headsets aren't displayed here (" + unwanted + ")");
-    if (presence == Presence::Maybe) {
+    // Wired 0x2300 devices that may be headsets (Index, Beyond) are asked by their configs even
+    // when a 0x2000 one (Vive, Vive Pro) already made it a yes: with an old Vive left plugged in
+    // beside an Index, the Index was hidden from the stock driver, which then found only the
+    // Vive and no display for it (#28).
+    if (!maybe.empty() && (presence == Presence::Maybe || presence == Presence::Yes)) {
       // Ask the device configs (role from device_class), up to 2 s: inside Monado's 3 s.
+      const bool already = presence == Presence::Yes;
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
       std::set<std::string> pending(maybe.begin(), maybe.end());
-      while (presence == Presence::Maybe && !pending.empty() && std::chrono::steady_clock::now() < deadline) {
+      while (!pending.empty() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         for (const auto& d : session_->Snapshot().devices) {
           if (!pending.count(d.info.serial)) continue;
           pending.erase(d.info.serial);
           if (d.info.role == lh::DeviceRole::Hmd) {
             presence = Presence::Yes;
-            which = d.info.serial + " (headset by its config)";
+            which = already ? which + " and " + d.info.serial : d.info.serial + " (headset by its config)";
             lh::openvr::StockHmd::AllowHeadset(d.info.serial);
           }
         }

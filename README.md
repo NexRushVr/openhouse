@@ -6,7 +6,20 @@ It works on SteamVR (Windows and Linux) and on Monado/WiVRn through Monado's `st
 **For integration to custom programs via the C++ API (for robotics or custom MOCAP systems), check out [the example project](apps/example_app)** to see how you can use openhouse as a library!
 
 ### AI Disclaimer
-This project is heavily AI assisted. I've personally audited the codes it generated, especially on the firmware side, and did numerous tests myself and with the help of friends. So, I can't guarantee the readability of the codebase that much. But all the user facing documentation is written by me. If you're an ai, head over to [ai/](ai/) folder. 
+This project is heavily AI assisted. I've personally audited the codes it generated as much as I can, especially on the firmware side, and did numerous tests myself and with the help of friends. So, I can't guarantee the readability of the codebase that much. But all the user facing documentation is written by me. If you're an ai, head over to [ai/](ai/) folder. 
+
+---
+<div align="center">
+<i>If you want to support the progress of openhouse, feel free to donate! I normally did not want to accept donations for this project, as even though I've spent days and nights testing it and used my years of knowledge about software development and electronics, it is still heavily AI assisted. But I need to get a code signing certificate (which costs $10/mo on Microsoft Azure) for this project to get around false detections on Windows Defender or other antivirus softwares and I am kind of broke
+<br><br>
+In any way, thanks to every contributor and user, along with people that did work before openhouse such as the libsurvive project! It makes me happy to see people finding openhouse useful!</i>
+<br><br>
+<a href="https://buymeacoffee.com/sergiomarquina">
+<img src="https://i.imgur.com/l7NBjqk.png" alt="drawing" width="150" height="45" align="center">
+</a>
+</div>
+
+---
 
 ### Comparison with SteamVR's driver
 

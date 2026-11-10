@@ -451,7 +451,7 @@ bool SessionImpl::Haptic(const std::string& serial, double frequency, double amp
   std::lock_guard lock(mutex_);
   const auto d = devices_.find(serial);
   if (!running_ || !usb_ || !Enabled(serial) || d == devices_.end() || !d->second.attached ||
-      d->second.info.role != DeviceRole::Controller || !std::isfinite(frequency) ||
+      (d->second.info.role != DeviceRole::Controller && !d->second.input) || !std::isfinite(frequency) ||
       !std::isfinite(amplitude) || !std::isfinite(duration)) return false;
   usb_->Haptic(serial, frequency, amplitude, duration);
   return true;
@@ -645,7 +645,13 @@ bool SessionImpl::SetUpDevice(const DeviceId& id, const std::string& config) {
     models_[id] = d.tracker->ImuModel();
     for (const auto& [serial, b] : bases_) d.tracker->OnBaseConfig(b.config, b.dynamic);
     PushIdentities();
+    // HTC's trackers report their pogo pins and power button in the wand's input format (the
+    // stock driver reads them with the wand's button ids; libsurvive with the wand's bits), so
+    // they get the wand's decoder. Other makers' trackers (Tundra) keep their inputs ignored.
+    const bool htcTracker = d.info.role == DeviceRole::Tracker &&
+                            (d.info.manufacturer.empty() || Lower(d.info.manufacturer) == "htc");
     if (d.info.role == DeviceRole::Controller) d.input.emplace(d.info.controllerType);
+    else if (htcTracker) d.input.emplace(ControllerType::ViveWand);
     else d.input.reset();
     Emit(SessionEventType::DeviceActivated, id,
          id + " activated as " + ToString(d.info.role) + (d.info.model.empty() ? "" : " (" + d.info.model + ")") +
@@ -998,7 +1004,7 @@ void SessionImpl::OnInput(const DeviceId& id, const InputReport& report) {
   Tick();
   if (!Enabled(id)) return;
   auto found = devices_.find(id);
-  if (found == devices_.end() || !found->second.input) return;  // trackers' inputs are ignored
+  if (found == devices_.end() || !found->second.input) return;  // no decoder: inputs ignored (non-HTC trackers)
   auto& d = found->second;
   d.input->Apply(report, d.haveClock ? HostTime(d, report.time) : now_);
 }
