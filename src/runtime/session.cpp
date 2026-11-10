@@ -287,6 +287,10 @@ class SessionImpl final : public Session, public InputSinkBase {
   void SaveSettings();
   void SetOutputTuning(double positionSmoothing, double rotationSmoothing, bool reportAcceleration) override;
   void SetMixedLight(const MixedLightOptions& options) override;
+  MixedLightOptions MixedLight() const override {
+    std::lock_guard lock(mutex_);
+    return mixed_;
+  }
   bool Enabled(const DeviceId& id) const { return !disabled_.count(id); }
   void CollectLogs(Device* d);
   void MaybeSave();
@@ -359,9 +363,9 @@ bool SessionImpl::Start(std::string* error) {
   persist_ = options_.saveRoomMap && !roomPath_.empty();
   if (!roomPath_.empty() && !room_.Load(roomPath_, &err)) Emit(SessionEventType::Log, "", err);
   room_.SetFrozen(std::getenv("LH_EVALUATE_ROOM") != nullptr);
-  mixed_ = options_.mixedLight;
   settingsPath_ = options_.settingsPath.empty() && !replay ? DefaultSettingsPath() : options_.settingsPath;
-  LoadSettings();
+  LoadSettings();  // settings.json "mixedLight" into mixed_
+  if (options_.mixedLight != MixedLightOptions{}) mixed_ = options_.mixedLight;  // lhtool --mixed-light
   for (const auto& serial : options_.disabledDevices) disabled_.insert(serial);
   preinitDir_ = options_.preinitDirectory == "-" ? "" : options_.preinitDirectory.empty() && !replay ? DefaultPreinitDirectory()
                                                                                                     : options_.preinitDirectory;
@@ -1462,6 +1466,29 @@ void SessionImpl::LoadSettings() {
       explicitControllers_ = true;
     }
     for (const auto& serial : j.value("disabledDevices", std::vector<std::string>{})) disabled_.insert(serial);
+    if (j.contains("mixedLight")) {
+      // 1.0 and 2.0 base stations together: true/false, or
+      // {"enabled": true, "controllers": true, "trackers": true, "scout": true}. Under SteamVR the
+      // driver's settings page wins once it has values (this seeds them); Monado and WiVRn use this.
+      const auto& m = j.at("mixedLight");
+      MixedLightOptions o;
+      if (m.is_boolean()) {
+        o.enabled = m.get<bool>();
+      } else if (m.is_object()) {
+        auto get = [&](const char* key, bool fallback) {
+          if (!m.contains(key)) return fallback;
+          if (!m.at(key).is_boolean()) throw std::runtime_error(std::string("mixedLight.") + key + " must be true or false");
+          return m.at(key).get<bool>();
+        };
+        o.enabled = get("enabled", false);
+        o.controllers = get("controllers", true);
+        o.trackers = get("trackers", true);
+        o.scout = get("scout", true);
+      } else {
+        throw std::runtime_error("mixedLight must be true, false or an object");
+      }
+      mixed_ = o;
+    }
     if (j.contains("roles")) {
       // {"LHR-...": "left_hand" | "right_hand" | "generic_tracker"}, per device; the rest
       // follow their config's tracked_controller_role.
