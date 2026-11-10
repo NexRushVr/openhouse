@@ -54,6 +54,31 @@ python3 scripts/package-windows.py build-win64 "$VCPKG_ROOT/installed/x64-mingw-
 baseline, artifact hashes and PE imports. Do not mistake an artifact built from a
 dirty tree for that commit alone.
 
+## Building natively on Windows (MSVC)
+
+Verified 2026-11-09 with Visual Studio Build Tools 2022 (17.14, MSVC 19.44, its bundled
+CMake and Ninja) and a dedicated vcpkg checkout: every suite passes (unit, replay,
+runtime, OpenVR components, the mock host loading the driver DLL, capture), oracle tests
+excluded. From a "x64 Native Tools" prompt:
+
+```
+cmake -S . -B build-msvc -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+  -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake ^
+  -DVCPKG_OVERLAY_TRIPLETS=%CD%\triplets -DVCPKG_TARGET_TRIPLET=x64-windows-static-avx2 ^
+  -DVCPKG_MANIFEST_FEATURES="tests;viewer" -DOPENVR_INCLUDE_DIR=<dir with openvr_driver.h> ^
+  -DLH_BUILD_ORACLE_TESTS=OFF
+cmake --build build-msvc
+ctest --test-dir build-msvc --output-on-failure
+```
+
+MSVC needs the code to stay off GCC-only and POSIX-only spellings: `__attribute__` behind
+`__GNUC__`, no `<unistd.h>`/`getpid`/`mkstemp` in tests (`platform::ProcessId`, the temp
+directory), `openhouse-check` (a GUI app with `main`) links with
+`/ENTRY:mainCRTStartup`, `-municode` is for MinGW only (MSVC starts `wmain` itself), and
+the linker's own manifest is off (`/MANIFEST:NO`) because the `.rc` already embeds one.
+The first configure builds Ceres and friends (~15 min). The shared library is `lh.dll`
+there (`liblh.dll` with MinGW).
+
 ## Windows installer (`apps/openhouse-installer`)
 
 A console exe (it replaced `Install-Driver.bat` running `powershell -ExecutionPolicy

@@ -82,6 +82,7 @@ add_library(lh_tracking
   src/tracking/tracked_object.cpp
   src/tracking/pose_solver.cpp
   src/tracking/tracking_source.cpp
+  src/tracking/pulse_sorter.cpp
   src/tracking/sample_history.cpp
   src/tracking/lighthouse_direct.cpp
   src/tracking/tracker.cpp
@@ -152,13 +153,18 @@ if(LH_BUILD_USB)
       # Replaces the .bat + PowerShell installer (Defender flagged that pattern).
       add_executable(openhouse-installer apps/openhouse-installer/main.cpp)
       target_link_libraries(openhouse-installer PRIVATE nlohmann_json::nlohmann_json)
-      target_compile_options(openhouse-installer PRIVATE -municode)
-      target_link_options(openhouse-installer PRIVATE -municode)
+      if(NOT MSVC)  # MSVC starts wmain by itself
+        target_compile_options(openhouse-installer PRIVATE -municode)
+        target_link_options(openhouse-installer PRIVATE -municode)
+      endif()
     endif()
     add_executable(openhouse-check WIN32 apps/openhouse-check/main.cpp)
     target_include_directories(openhouse-check PRIVATE include)
     if(WIN32)
       target_link_libraries(openhouse-check PRIVATE winhttp)
+    endif()
+    if(MSVC)
+      target_link_options(openhouse-check PRIVATE /ENTRY:mainCRTStartup)  # a GUI app with main()
     endif()
     add_executable(lhcapture apps/lhcapture/main.cpp)
     target_include_directories(lhcapture PRIVATE src)
@@ -169,6 +175,7 @@ endif()
 
 # ---- liblh: the session runtime (shared room map, devices, input) -------------
 add_library(lh_runtime OBJECT
+  src/runtime/mixed_light.cpp
   src/runtime/room_map.cpp
   src/runtime/index_input.cpp
   src/runtime/device_tracker.cpp
@@ -288,7 +295,11 @@ if(LH_BUILD_TESTS)
     tests/unit/test_tracking_source.cpp
     tests/unit/test_pose_solver.cpp
     tests/unit/test_tracker.cpp
-    tests/unit/test_disambiguator_sob.cpp)
+    tests/unit/test_direct_filter.cpp
+    tests/unit/test_disambiguator_sob.cpp
+    tests/unit/test_pulse_sorter.cpp
+    tests/unit/test_mixed_light.cpp
+    src/runtime/mixed_light.cpp)
   target_include_directories(lh_unit_tests PRIVATE src)
   target_link_libraries(lh_unit_tests PRIVATE lh_tracking GTest::gtest_main)
   if(WIN32)
@@ -296,7 +307,7 @@ if(LH_BUILD_TESTS)
   endif()
   if(LH_BUILD_USB)
     target_sources(lh_unit_tests PRIVATE tests/unit/test_report_parser.cpp tests/unit/test_device_config.cpp
-      tests/unit/test_raw_capture.cpp)
+      tests/unit/test_raw_capture.cpp tests/unit/test_radio_mode.cpp)
     target_link_libraries(lh_unit_tests PRIVATE lh_usb)
     add_executable(lh_replay_tests tests/integration/test_replay.cpp)
     target_compile_definitions(lh_replay_tests PRIVATE LH_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

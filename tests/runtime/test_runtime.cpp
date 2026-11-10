@@ -8,7 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
-#include <unistd.h>
+#include "platform/platform.hpp"
 #include <random>
 #include <tuple>
 #include <sstream>
@@ -288,7 +288,7 @@ TEST(RoomMap, LockedBaseMovesOnlyWhenBumped) {
 }
 
 TEST(RoomMap, TurnedOriginStartsANewRoom) {
-  const auto path = (std::filesystem::temp_directory_path() / ("lh-test-stale-" + std::to_string(::getpid()) + ".json")).string();
+  const auto path = (std::filesystem::temp_directory_path() / ("lh-test-stale-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
   const Eigen::Vector3d upright(0.024, -1.0, -0.008), mounted(0.128, -0.738, 0.663);
   BaseDynamicState saved, live;
   saved.accelDir = {float(upright.x()), float(upright.y()), float(upright.z())};
@@ -326,7 +326,7 @@ TEST(RoomMap, TurnedOriginStartsANewRoom) {
 }
 
 TEST(RoomMap, PowerCycledOriginKeepsTheOthersLoosely) {
-  const auto path = (std::filesystem::temp_directory_path() / ("lh-test-relevel-" + std::to_string(::getpid()) + ".json")).string();
+  const auto path = (std::filesystem::temp_directory_path() / ("lh-test-relevel-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
   const Eigen::Vector3d upright(0.024, -1.0, -0.008), mounted(0.128, -0.738, 0.663);
   BaseDynamicState saved, live;
   saved.accelDir = {float(upright.x()), float(upright.y()), float(upright.z())};
@@ -441,7 +441,7 @@ TEST(DeviceRecovery, InvalidImuCalibrationIsNeverCarriedOver) {
 }
 
 TEST(RoomMap, PersistsRoomsConfigsAndOotxFrames) {
-  const auto path = (std::filesystem::temp_directory_path() / ("lh-test-roommap-" + std::to_string(::getpid()) + ".json")).string();
+  const auto path = (std::filesystem::temp_directory_path() / ("lh-test-roommap-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
   std::filesystem::remove(path);
   {
     RoomMap room;
@@ -511,7 +511,7 @@ ReplayResult Replay(const std::string& roomPath, const std::string& capture = kC
 TEST(OutputStage, NoJumpsAndNoFlyAwayWhenHidden) {
   const std::string capture = TestCapture("controller-moving-hidden/input.lhraw");
   if (!std::filesystem::exists(capture)) GTEST_SKIP();
-  const auto trace = (std::filesystem::temp_directory_path() / ("lh-test-trace-" + std::to_string(::getpid()) + ".jsonl")).string();
+  const auto trace = (std::filesystem::temp_directory_path() / ("lh-test-trace-" + std::to_string(lh::platform::ProcessId()) + ".jsonl")).string();
   SessionOptions options;
   options.replayPath = capture;
   options.replayRealtime = false;
@@ -574,7 +574,7 @@ TEST(SessionReplay, BootstrapsDespiteOneBadSensor) {
 #else
   const std::string capture = TestCapture("floor-reflection");
   if (!std::filesystem::exists(capture + "/input.lhraw")) GTEST_SKIP() << "no floor capture";
-  const auto room = (std::filesystem::temp_directory_path() / ("lh-test-floor-room-" + std::to_string(::getpid()) + ".json")).string();
+  const auto room = (std::filesystem::temp_directory_path() / ("lh-test-floor-room-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
   std::filesystem::remove(room);
   const auto r = Replay(room, capture);
   std::filesystem::remove(room);
@@ -590,7 +590,7 @@ TEST(SessionReplay, ControllerPowerCycleStartsFreshTrackingEpoch) {
   GTEST_SKIP() << "replay built without USB/capture layer";
 #else
   if (!std::filesystem::exists(kCapture + "/input.lhraw")) GTEST_SKIP();
-  const auto file = std::filesystem::temp_directory_path() / ("lh-reconnect-" + std::to_string(::getpid()) + ".lhraw");
+  const auto file = std::filesystem::temp_directory_path() / ("lh-reconnect-" + std::to_string(lh::platform::ProcessId()) + ".lhraw");
   usb::RawCaptureReader reader;
   ASSERT_TRUE(reader.Open(kCapture + "/input.lhraw"));
   std::vector<usb::EndpointInfo> endpoints;
@@ -647,7 +647,7 @@ TEST(SessionReplay, TracksBothDevicesInTheSharedRoom) {
   GTEST_SKIP() << "replay built without USB/capture layer";
 #endif
   if (!std::filesystem::exists(kCapture + "/input.lhraw")) GTEST_SKIP() << "no motion capture";
-  const auto room = (std::filesystem::temp_directory_path() / ("lh-test-session-room-" + std::to_string(::getpid()) + ".json")).string();
+  const auto room = (std::filesystem::temp_directory_path() / ("lh-test-session-room-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
   std::filesystem::remove(room);
   const auto first = Replay(room);
   // Roles come from the device JSON; receivers without tracking configs are hidden.
@@ -773,15 +773,16 @@ struct MsReplay {
   SessionSnapshot snapshot;
   std::vector<std::pair<double, bool>> valid;  // (t, valid) of one device, 100 Hz
 };
-MsReplay MsRun(const std::string& capture, const std::string& only, double to) {
-  const auto trace = (std::filesystem::temp_directory_path() / ("lh-test-ms-" + std::to_string(::getpid()) + ".jsonl")).string();
+MsReplay MsRun(const std::string& capture, const std::string& only, double to, bool mixedLight = false) {
+  const auto trace = (std::filesystem::temp_directory_path() / ("lh-test-ms-" + std::to_string(lh::platform::ProcessId()) + ".jsonl")).string();
   SessionOptions options;
   options.replayPath = capture;
   options.replayRealtime = false;
   options.replayTo = to;
+  options.mixedLight.enabled = mixedLight;
   if (!only.empty()) options.replayOnly = {only};
   options.saveRoomMap = false;
-  options.roomMapPath = (std::filesystem::temp_directory_path() / ("lh-test-ms-room-" + std::to_string(::getpid()) + ".json")).string();
+  options.roomMapPath = (std::filesystem::temp_directory_path() / ("lh-test-ms-room-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
   options.replayTracePath = trace;
   auto session = Session::Create(options);
   MsReplay r;
@@ -829,6 +830,35 @@ TEST(MultiStation, DetectsDecodesAndTracks) {
   int n = 0, ok = 0;
   for (const auto& [t, v] : r.valid) if (t - start > 5) { ++n; ok += v; }
   EXPECT_GT(ok, 0.95 * n) << ok << "/" << n;
+}
+
+// The 1.0 + 2.0 switch on in a room with no 2.0 station (lhbs multi-station, whose SteamVR
+// database has a 2.0 station of another room): never in use, not even before the room is known,
+// so multi-station detection and tracking are as with it off (DetectsDecodesAndTracks).
+TEST(MixedLight, NeverInUseInARoomWithout2Point0Stations) {
+  const std::string capture = TestCapture("ms-a/input.lhraw");
+  if (!std::filesystem::exists(capture)) GTEST_SKIP();
+  const auto r = MsRun(capture, "LHR-13DA81D1", 40, true);
+  EXPECT_FALSE(MsHasEvent(r, "1.0 + 2.0 base stations together: in use"));
+  EXPECT_TRUE(MsHasEvent(r, "multi-station layout detected"));
+  ASSERT_FALSE(r.valid.empty());
+  const double start = r.valid.front().first;
+  int n = 0, ok = 0;
+  for (const auto& [t, v] : r.valid) if (t - start > 5) { ++n; ok += v; }
+  EXPECT_GT(ok, 0.95 * n) << ok << "/" << n;
+}
+
+// In a 2.0 room it's in use, and LH2 light alone (the recording's mode) tracks as before.
+TEST(MixedLight, InUseWith2Point0StationsAndLh2LightStillTracks) {
+  const std::string capture = TestCapture("lh2-one-controller/input.lhraw");
+  if (!std::filesystem::exists(capture)) GTEST_SKIP();
+  const auto r = MsRun(capture, "", 0, true);
+  EXPECT_TRUE(MsHasEvent(r, "1.0 + 2.0 base stations together: in use"));
+  ASSERT_FALSE(r.valid.empty());
+  const double start = r.valid.front().first;
+  int n = 0, ok = 0;
+  for (const auto& [t, v] : r.valid) if (t - start > 10) { ++n; ok += v; }
+  EXPECT_GT(ok, 0.97 * n) << ok << "/" << n;
 }
 
 // A stock 2-station room never switches to the multi-station layout.
@@ -892,7 +922,7 @@ class Lh2Regression : public ::testing::TestWithParam<const char*> {};
 TEST_P(Lh2Regression, TracksEveryDeviceWithoutJumps) {
   const std::string capture = TestCapture(std::string(GetParam()) + "/input.lhraw");
   if (!std::filesystem::exists(capture)) GTEST_SKIP() << capture;
-  const auto trace = (std::filesystem::temp_directory_path() / ("lh-test-lh2-" + std::to_string(::getpid()) + ".jsonl")).string();
+  const auto trace = (std::filesystem::temp_directory_path() / ("lh-test-lh2-" + std::to_string(lh::platform::ProcessId()) + ".jsonl")).string();
   SessionOptions options;
   options.replayPath = capture;
   options.replayRealtime = false;
