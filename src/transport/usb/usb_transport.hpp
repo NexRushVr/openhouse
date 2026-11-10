@@ -74,6 +74,7 @@ class ReportDecoder {
     uint64_t generation = 0;
     std::unique_ptr<ImuReportParser> imu;
     std::unique_ptr<OpticalReportParser> optical;
+    std::unique_ptr<ButtonsReportParser> buttons;  // EndpointKind::Buttons
     std::unique_ptr<WirelessReportParser> wireless;
   };
   void ResetWireless(Ep& ep);

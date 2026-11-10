@@ -57,9 +57,12 @@ bool Classify(uint16_t pid, int iface, EndpointKind& kind) {
     case 0x2000:  // Lighthouse FPGA RX (Index HMD, Vive Pro)
     case 0x2012:
     case 0x2022:
-    case 0x2300:  // Bigscreen Beyond (SteamVR shows it as a Tundra device)
+    case 0x2300:  // Bigscreen Beyond (SteamVR shows it as a Tundra device), Vive Tracker 2018/3.0
       if (iface == 0) { kind = EndpointKind::Imu; return true; }
       if (iface == 1) { kind = EndpointKind::Optical; return true; }
+      // Buttons (libsurvive TRACKER0/1_BUTTONS, W_WATCHMAN1_BUTTONS): a tracker's power button
+      // and pogo pins on USB. Not on 0x2000, whose iface 2 is the headset's own.
+      if (iface == 2 && pid != 0x2000) { kind = EndpointKind::Buttons; return true; }
       return false;
     case 0x2101:  // Watchman dongle
     case 0x2102:  // Watchman radio / Kuroshin dongle
@@ -88,8 +91,10 @@ void ReportDecoder::AddEndpoint(const EndpointInfo& e) {
   if (e.kind == EndpointKind::Imu) ep.imu = std::make_unique<ImuReportParser>(dev, sink_);
   if (e.kind == EndpointKind::Optical) ep.optical = std::make_unique<OpticalReportParser>(dev, sink_);
   if (e.kind == EndpointKind::Wireless) ep.wireless = std::make_unique<WirelessReportParser>(dev, sink_);
+  if (e.kind == EndpointKind::Buttons) ep.buttons = std::make_unique<ButtonsReportParser>(dev, sink_);
   eps_[e.ep] = std::move(ep);
-  if (fresh || !e.configJson.empty()) sink_->OnDeviceAttached(e.serial, e.configJson);
+  // The buttons interface carries no config: its device attaches with its IMU interface.
+  if (e.kind != EndpointKind::Buttons && (fresh || !e.configJson.empty())) sink_->OnDeviceAttached(e.serial, e.configJson);
 }
 
 void ReportDecoder::ResetWireless(Ep& ep) {
@@ -114,6 +119,7 @@ void ReportDecoder::OnReport(double hostTime, uint16_t epId, bool last, const ui
   Ep& ep = it->second;
   if (ep.imu) ep.imu->Parse(hostTime, data, len, last);
   else if (ep.optical) ep.optical->Parse(hostTime, data, len);
+  else if (ep.buttons) ep.buttons->Parse(hostTime, data, len);
   else if (ep.wireless && len) {
     if (data[0] == 0x26) { ResetWireless(ep); return; }
     if (data[0] != 0x23 && data[0] != 0x24) return;
@@ -371,6 +377,7 @@ void AddSensorType(std::string* json, int type) {
 }  // namespace
 
 void UsbTransport::CompleteSetup(Open& o, bool supportsVersioning) {
+  if (o.info.kind == EndpointKind::Buttons) return;  // input only: no sensor type, ranges or config
   if (o.info.kind != EndpointKind::Optical) {
     o.sensorType = ReadSensorType(o.dev);
       Log(LogLevel::Debug, "%s: hardware sensor type %s\n", o.info.serial.c_str(),
