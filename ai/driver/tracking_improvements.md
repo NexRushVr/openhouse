@@ -192,6 +192,14 @@ On session-ms-01 the room settles about 27 s in, from the stored room as from no
 the solver still moves the second base about 3 cm over 20 s (a second epoch at 45 s):
 the room solver is the next thing to steady.
 
+## 1.0 and 2.0 stations together (`PulseSorter`, `runtime/mixed_light.hpp`)
+
+Off by default, a SteamVR switch: devices in LH1 mode, where they see both kinds, with each 2.0
+station's hits picked out of the LH1 pulses and sent down the LH2 path, the pose helping to decide;
+visits to LH2 mode to time the rotors again; light in LH1 mode weighted by how much it scatters
+(`LighthouseDirect::SetMixedLightScatter`, the only change to what the filter does, 0 unless in use). Off,
+replays are byte for byte as before. `mixed_stations.md` has the design and the numbers.
+
 ## A/B switches (environment)
 
 `LH_STOCK_FILTER` turns off all of the above except the room. The individual switches

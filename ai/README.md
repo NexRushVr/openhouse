@@ -32,7 +32,8 @@ Goals and constraints (from the owner):
   controllers (`ControllerType::ViveWand`, libsurvive button map; untested on hardware).
 * Headsets: tracked by us; their display comes from SteamVR's stock driver loaded at
   runtime for the headset only (`src/openvr/stock_hmd.cpp`). Never ship Valve's files.
-* Lighthouse 1.0 and 2.0 both work (`driver/lh2_support.md`). Making LH1 bases emit
+* Lighthouse 1.0 and 2.0 both work (`driver/lh2_support.md`), and together in one room
+  behind an experimental switch (`driver/mixed_stations.md`). Making LH1 bases emit
   LH2-style light was researched and set aside: `driver/lh1_as_lh2_research.md`.
 * Release hygiene: no Valve/HTC text or data in the repo (stock log wording, firmware
   descriptions), no stderr debug prints (use DEBUG-level log messages), the name is
@@ -123,8 +124,10 @@ Version 1.0.2 (`include/lh/version.hpp`; v1.0.1 shipped still saying 1.0.0). Rec
   elsewhere, or the fit rejecting its keyframes; `driver/tracking_improvements.md`).
   `Session::ResetRoom` / deleting `roommap.json` forgets every room.
 * SteamVR settings page (`packaging/settingsschema.vrsettings`, section `driver_openhouse`):
-  smoothing, acceleration prediction, Record Session (turning it off saves the bug report
-  zip, `lh/bug_report.hpp`), Reset room. Only toggles/sliders/selects exist there.
+  smoothing, acceleration prediction, 1.0 and 2.0 base stations together (off; with switches
+  for controllers, trackers and the headset's timing, `driver/mixed_stations.md`), Record
+  Session (turning it off saves the bug report zip, `lh/bug_report.hpp`), Reset room. Only
+  toggles/sliders/selects exist there.
 * Bug reports: replay `recording/*.lhraw` with `lhtool session ... --room COPY_OF config/roommap.json
   --steam-db - --preinit - --trace OUT`. Mid-session recordings decode only with the Wv2
   probes (`driver/wireless_protocol.md`); older builds see almost nothing in them.
@@ -187,6 +190,7 @@ Open:
 * Runtime and host: `lh_runtime.md`, `runtime.md`, `interfaces.md`, `openvr_driver.md`,
   `windows_build.md`.
 * LH2: `lh2_support.md` (pipeline, results, open items). Research: `lh1_as_lh2_research.md`.
+  Both kinds in one room: `mixed_stations.md`.
 
 `firmware/` (lhbs): `usage.md` (build, flash, console; end users: `basestation_firmware/installer`), `FIRMWARE_OVERVIEW.md`,
 `HARDWARE.md` (pin map, peripherals, verification log), `MULTISTATION.md` (TDM slots,
