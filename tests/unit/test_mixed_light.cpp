@@ -312,6 +312,34 @@ TEST(MixedLight, OnlyLooksForUnseen2Point0Stations) {
   EXPECT_EQ(Mode(lh1), 1) << "until the next look";
 }
 
+// A 2.0 station seen in a room learned from 1.0 stations alone, where none is placed yet: LH2 mode gives no
+// pose, so a device only learns the rotors there and stays on the 1.0 light, where it can place them.
+// Live, without this every device cycled 8 s blind in LH2 mode and 3 s in LH1 mode (too short to
+// pick up the 1.0 light), the headset stayed in LH2 mode, and tracking never came back.
+TEST(MixedLight, With2Point0StationsNotInTheRoomStaysOnThe1Point0Light) {
+  MixedLightView v = InLh2(2.5);
+  v.tracking = false;
+  v.lost = 999;
+  EXPECT_EQ(Mode(v), -1) << "placed, it would wait for a pose";
+  v.lh2Unplaced = true;
+  EXPECT_EQ(Mode(v), 0) << "rotors learned: back to the 1.0 light";
+  v.stayLh2 = true;  // a headset
+  EXPECT_EQ(Mode(v), 0);
+  v.inMode = v.sinceSent = 1.0;
+  EXPECT_EQ(Mode(v), -1) << "a visit still lasts long enough to learn the rotors";
+
+  MixedLightView lh1 = InLh1(10.0);
+  lh1.tracking = false;
+  lh1.lost = 10.0;
+  EXPECT_EQ(Mode(lh1), 1) << "placed, LH2 mode helps a lost device";
+  lh1.lh2Unplaced = true;
+  EXPECT_EQ(Mode(lh1), -1) << "unplaced it can't: stay and pick up the 1.0 light";
+  lh1.stayLh2 = true;
+  EXPECT_EQ(Mode(lh1), -1) << "the headset too";
+  lh1.inMode = kVisits;
+  EXPECT_EQ(Mode(lh1), 1) << "visits go on, to keep the rotors";
+}
+
 // In use only where there's a 2.0 station to sort, and not for a room whose 2.0 stations stay dark
 // (switched off, or not woken): there devices would go on looking for their light.
 TEST(MixedLight, InUseOnlyWithA2Point0StationToSort) {

@@ -55,6 +55,10 @@ struct MixedLightView {
   // In use for the room's 2.0 stations, none seen yet this session: they may be off, so every device
   // (the headset too) only looks for their light now and then, tracking on the 1.0 light in between.
   bool lh2Unseen = false;
+  // A 2.0 station seen, but none in the room in use yet (a room learned from 1.0 stations alone): LH2 mode
+  // gives no pose until a device on the 1.0 light places one from its sorted hits. So every device, the
+  // headset too, visits LH2 mode only to learn the rotors, and stays on the 1.0 light even when lost there.
+  bool lh2Unplaced = false;
 };
 
 struct MixedLightStep {
