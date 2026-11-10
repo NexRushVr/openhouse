@@ -69,6 +69,9 @@ ctest --test-dir build-linux -j4 --output-on-failure      # 9 tests; oracle test
 scripts/build-linux.sh && dist/openhouse-driver/install.sh   # close SteamVR / Monado / WiVRn first
 ```
 
+Native Windows (MSVC 2022, vcpkg, the `x64-windows-static-avx2` overlay triplet) builds
+and passes the same suites: `driver/windows_build.md`.
+
 Release packages (each builds and packages; nothing is installed):
 * `scripts/build-linux.sh`: static vcpkg Ceres (no SuiteSparse: its SPQR/CHOLMOD are GPL and
   `package-driver.py` refuses to bundle them) into `build-release`, then `package-linux.sh`.
