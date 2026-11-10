@@ -1372,10 +1372,7 @@ class Provider : public IServerTrackedDeviceProvider {
     // 1.0 and 2.0 base stations together (ai/driver/mixed_stations.md). SteamVR: the settings
     // page, its missing values seeded from settings.json "mixedLight". Other hosts keep
     // settings.json's: Monado's steamvr_lh answers every GetBool with false and no error.
-    // Off the settings page until it is verified with more than one 1.0 station (the toggles
-    // left settingsschema.vrsettings): settings.json "mixedLight" alone, under every host.
-    constexpr bool kMixedLightOnSettingsPage = false;
-    if (kMixedLightOnSettingsPage && HostName().rfind("vrserver", 0) == 0) {
+    if (HostName().rfind("vrserver", 0) == 0) {
       const lh::MixedLightOptions file = session_->MixedLight();
       lh::MixedLightOptions mixed;
       mixed.enabled = flag("mixedLight", file.enabled);
