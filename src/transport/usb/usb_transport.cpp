@@ -176,6 +176,12 @@ bool UsbTransport::FetchRangeModes(hid_device_* dev, int8_t& gyro, int8_t& accel
   return false;
 }
 
+std::optional<uint32_t> UsbTransport::ConnectedSerial(hid_device_* receiver) {
+  DeviceInfo di;
+  if (!QueryDeviceInfo(receiver, &di, 2)) return std::nullopt;
+  return di.serial;
+}
+
 bool UsbTransport::QueryDeviceInfo(hid_device_* dev, DeviceInfo* info, int attempts) {
   // 0x3dd8a0: feature 0xff [0x83] then read back a TLV list of 5-byte entries
   // {u8 type; u32 value}; type 2 bit 3 = wireless protocol versioning supported.

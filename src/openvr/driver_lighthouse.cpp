@@ -38,6 +38,7 @@
 
 #include "pairing_mailbox.hpp"
 #include "stock_hmd.hpp"
+#include "watchdog.hpp"
 
 namespace {
 #ifdef _WIN32
@@ -1439,6 +1440,7 @@ Provider g_provider;
 #endif
 extern "C" LH_DRIVER_EXPORT void* HmdDriverFactory(const char* interfaceName, int* returnCode) {
   if (std::strcmp(interfaceName, IServerTrackedDeviceProvider_Version) == 0) return &g_provider;
+  if (std::strcmp(interfaceName, IVRWatchdogProvider_Version) == 0) return lh::openvr::WatchdogProvider();  // #38
   if (returnCode) *returnCode = VRInitError_Init_InterfaceNotFound;
   return nullptr;
 }

@@ -217,7 +217,7 @@ endif()
 option(LH_BUILD_OPENVR_DRIVER "Build the drop-in driver_lighthouse.so" ON)
 find_path(OPENVR_INCLUDE_DIR openvr_driver.h PATH_SUFFIXES openvr)
 if(LH_BUILD_OPENVR_DRIVER AND LH_BUILD_USB AND OPENVR_INCLUDE_DIR)
-  add_library(driver_lighthouse MODULE src/openvr/driver_lighthouse.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/stock_hmd.cpp src/openvr/pairing_mailbox.cpp src/openvr/telemetry_server.cpp $<TARGET_OBJECTS:lh_runtime>)
+  add_library(driver_lighthouse MODULE src/openvr/driver_lighthouse.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/stock_hmd.cpp src/openvr/pairing_mailbox.cpp src/openvr/telemetry_server.cpp src/openvr/watchdog.cpp $<TARGET_OBJECTS:lh_runtime>)
   if(WIN32)
     target_link_libraries(driver_lighthouse PRIVATE setupapi hid)  # stock_hmd: hiding devices from the stock DLL
     # HmdDriverFactory and our hidapi, for drivers that hook HID access (the .def says why).
