@@ -12,6 +12,8 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
+#include <array>
 #include <map>
 #include <set>
 #include <condition_variable>
@@ -284,6 +286,13 @@ class SessionImpl final : public Session, public InputSinkBase {
   void ApplySolve(const RoomSolveOutput& out);
   void SolverMain();
   void LoadSettings();
+  void LoadLearnedImu(const std::string& path);
+  void ApplyLearnedImu(const DeviceId& id, const std::string& config, TrackedObjectModel* model);
+  // SteamVR's learned per-unit IMU calibration (lighthousedb.json "known_objects"), by serial:
+  // used only for a device whose own config has none (#69).
+  struct LearnedImu { std::array<double, 3> accBias{}, accScale{1, 1, 1}, gyroBias{}; bool acc = false, scale = false, gyro = false; };
+  std::map<DeviceId, LearnedImu> learnedImu_;
+  std::set<DeviceId> learnedImuLogged_;
   void SaveSettings();
   void SetOutputTuning(double positionSmoothing, double rotationSmoothing, bool reportAcceleration) override;
   void SetMixedLight(const MixedLightOptions& options) override;
@@ -386,6 +395,10 @@ bool SessionImpl::Start(std::string* error) {
   if (!steamDb.empty() && steamDb != "-") {
     if (!room_.ImportSteamDatabase(ReadFile(steamDb), &err)) Emit(SessionEventType::Log, "", err);
   }
+  // The learned IMU values also when the room isn't taken from it (the driver passes "-"): live,
+  // SteamVR's own database; a replay only reads the one it was given.
+  if (!steamDb.empty() && steamDb != "-") LoadLearnedImu(steamDb);
+  else if (!replay) LoadLearnedImu(platform::SteamConfigDirectory() + "/lighthousedb.json");
   {
     std::lock_guard lock(mutex_);
     for (const auto& [serial, c] : room_.KnownConfigs()) {
@@ -399,13 +412,15 @@ bool SessionImpl::Start(std::string* error) {
   stop_ = false;
   finished_ = false;
   syncSolve_ = replay && !options_.replayRealtime;
-  if (!syncSolve_) solver_ = std::thread([this] { SolverMain(); });
+  // The solver thread starts only once Start can't fail any more: a failed Start left it
+  // running, and a second Start then terminated on the joinable thread (#49.7).
   if (replay) {
 #ifdef LH_RUNTIME_USB
     if (!std::filesystem::exists(options_.replayPath)) {
       if (error) *error = "capture not found: " + options_.replayPath;
       return false;
     }
+    if (!syncSolve_) solver_ = std::thread([this] { SolverMain(); });
     running_ = true;
     replay_ = std::thread([this] { ReplayMain(); });
 #else
@@ -422,9 +437,11 @@ bool SessionImpl::Start(std::string* error) {
       const bool routine = std::string(result.status) == "written" && !result.powerOff;
       std::lock_guard lock(mutex_);
       std::ostringstream text;
-      text << (result.powerOff ? "power-off " : "haptic ") << result.serial << ": " << result.status
-           << " (HID bytes=" << result.bytes;
-      if (!result.powerOff) text << ", on=" << (result.report[4] | result.report[5] << 8)
+      const bool lightMode = result.opticalMode >= 0;
+      text << (result.powerOff ? "power-off " : lightMode ? "light mode " : "haptic ") << result.serial << ": "
+           << result.status << " (HID bytes=" << result.bytes;
+      if (lightMode) text << ", mode " << result.opticalMode;
+      else if (!result.powerOff) text << ", on=" << (result.report[4] | result.report[5] << 8)
                                 << ", off=" << (result.report[6] | result.report[7] << 8)
                                 << ", repeats=" << (result.report[8] | result.report[9] << 8);
       text << ")";
@@ -436,6 +453,7 @@ bool SessionImpl::Start(std::string* error) {
       if (error) *error = "no Lighthouse USB devices could be opened (is SteamVR running?)";
       return false;
     }
+    if (!syncSolve_) solver_ = std::thread([this] { SolverMain(); });
     running_ = true;
 #else
     if (error) *error = "built without the USB transport";
@@ -584,6 +602,7 @@ bool SessionImpl::SetUpDevice(const DeviceId& id, const std::string& config) {
     TrackedObjectModel model;
     std::string err;
     if (!TrackedObjectModel::FromJson(config, &model, &err)) throw std::runtime_error(err);
+    ApplyLearnedImu(id, config, &model);
     // A radio reconnect is a new timestamp/protocol epoch, not a duplicate attach.
     d.haveClock = false;
     d.clockOffset = 0;
@@ -1432,12 +1451,13 @@ std::vector<DeviceUpdate> SessionImpl::Updates() const {
     DeviceUpdate u;
     u.serial = id;
     u.role = d.info.role;
-    u.connected = d.attached && now_ - d.lastData < 1.0;
+    // As Snapshot(): a preinitialized device shows connected (not tracking) before it attaches (#49.6).
+    u.connected = d.preinitConnected || (d.attached && now_ - d.lastData < 1.0);
     u.enabled = Enabled(id);
     u.batteryPercent = d.info.batteryPercent;
     u.charging = d.info.charging;
     u.pose = MakePose(d);
-    if (!u.connected || !u.enabled) {
+    if (!u.connected || !u.enabled || d.preinitConnected) {
       u.pose.state = TrackingState::Disconnected;
       u.pose.valid = false;
       u.pose.result = TrackingResult::Uninitialized;
@@ -1453,6 +1473,60 @@ std::vector<SessionEvent> SessionImpl::PollEvents() {
   std::vector<SessionEvent> out(events_.begin(), events_.end());
   events_.clear();
   return out;
+}
+
+void SessionImpl::LoadLearnedImu(const std::string& path) {
+  std::ifstream in(path);
+  if (!in) return;
+  try {
+    const json j = json::parse(in);
+    if (!j.contains("known_objects") || !j.at("known_objects").is_array()) return;
+    auto vec = [](const json& o, const char* key, std::array<double, 3>* out) {
+      if (!o.contains(key)) return false;
+      const auto& v = o.at(key);
+      if (!v.is_array() || v.size() != 3) return false;
+      for (size_t i = 0; i < 3; ++i) {
+        if (!v[i].is_number()) return false;
+        (*out)[i] = v[i].get<double>();
+        if (!std::isfinite((*out)[i])) return false;
+      }
+      return true;
+    };
+    for (const auto& object : j.at("known_objects")) {
+      if (!object.is_object() || !object.contains("imu") || !object.value("serialNumber", json()).is_string()) continue;
+      const auto& imu = object.at("imu");
+      if (!imu.is_object()) continue;
+      LearnedImu l;
+      l.acc = vec(imu, "acc_bias", &l.accBias);
+      l.scale = vec(imu, "acc_scale", &l.accScale) &&
+                std::all_of(l.accScale.begin(), l.accScale.end(), [](double v) { return v > 0.5 && v < 2.0; });
+      l.gyro = vec(imu, "gyro_bias", &l.gyroBias);
+      if (l.acc || l.scale || l.gyro) learnedImu_[object.at("serialNumber").get<std::string>()] = l;
+    }
+  } catch (const std::exception& e) {
+    Emit(SessionEventType::Log, "", "lighthousedb " + path + ": learned IMU calibration not read (" + e.what() + ")");
+  }
+}
+
+// Only where the device's own config has none: its values are its factory calibration.
+void SessionImpl::ApplyLearnedImu(const DeviceId& id, const std::string& config, TrackedObjectModel* model) {
+  const auto found = learnedImu_.find(id);
+  if (found == learnedImu_.end()) return;
+  json imu;
+  try {
+    const json j = json::parse(config);
+    if (j.contains("imu") && j.at("imu").is_object()) imu = j.at("imu");
+  } catch (const std::exception&) {
+    return;
+  }
+  const auto has = [&](const char* key) { return imu.is_object() && imu.contains(key); };
+  const auto& l = found->second;
+  std::string used;
+  if (l.acc && !has("acc_bias")) { model->accBias = l.accBias; used += " acc_bias"; }
+  if (l.scale && !has("acc_scale")) { model->accScale = l.accScale; used += " acc_scale"; }
+  if (l.gyro && !has("gyro_bias")) { model->gyroBias = l.gyroBias; used += " gyro_bias"; }
+  if (!used.empty() && learnedImuLogged_.insert(id).second)
+    Emit(SessionEventType::Log, id, id + ": no IMU calibration in its config; using SteamVR's learned" + used, LogLevel::Info);
 }
 
 void SessionImpl::LoadSettings() {
@@ -1656,6 +1730,7 @@ void SessionImpl::SetDeviceEnabled(const std::string& serial, bool enabled) {
     auto& d = found->second;
     TrackedObjectModel model;
     if (TrackedObjectModel::FromJson(d.info.configJson, &model)) {
+      ApplyLearnedImu(serial, d.info.configJson, &model);
       model.serial = serial;
       d.tracker = std::make_unique<DeviceTracker>(serial, model, &room_);
       d.tracker->SetSmoothing(smoothPosition_, smoothRotation_);
@@ -1689,6 +1764,7 @@ void SessionImpl::ResetRoomLocked(const std::string& why) {
     if (!d.tracker) continue;
     TrackedObjectModel model;
     if (!TrackedObjectModel::FromJson(d.info.configJson, &model)) continue;
+    ApplyLearnedImu(id, d.info.configJson, &model);
     model.serial = id;
     d.tracker = std::make_unique<DeviceTracker>(id, model, &room_);
     d.tracker->SetSmoothing(smoothPosition_, smoothRotation_);

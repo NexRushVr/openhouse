@@ -34,6 +34,7 @@ struct DeviceCommandResult {
   const char* status = "not-connected";  // written / expired / write-failed / not-connected
   int bytes = 0;                     // HID return count; not a motor acknowledgement
   std::array<uint8_t, 64> report{};
+  int opticalMode = -1;               // >= 0: a light-mode (optical sub-protocol) command
 };
 
 struct UsbTransportOptions {

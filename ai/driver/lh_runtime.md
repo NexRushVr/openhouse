@@ -227,3 +227,14 @@ both bases 0.33 s after the HMD decoded them.
   available (`SeedPose`) but not used for that case yet.
 * Base identification needs an identity from some device or the saved room map.
 * Vive wands are controllers with their own decoder (`ControllerType::ViveWand`).
+
+## Learned IMU calibration and OOTX sharing (2026-11-10)
+
+* A device whose own config has no `imu` `acc_bias` / `acc_scale` / `gyro_bias` gets SteamVR's
+  learned values for it from `lighthousedb.json` `known_objects[].imu` (#69). Live sessions read
+  SteamVR's database for this even though the room is not taken from it (the driver passes
+  `--steam-db -`); replays read only the database they are given. A config's own values always
+  win; the fallback is logged once per device. `SessionImpl::LoadLearnedImu` / `ApplyLearnedImu`.
+* `lh::Tracker` (the library API) now keeps every OOTX-decoded base config in `bases` and hands
+  it to all devices, as `DeviceTracker` already did, so a filter reset or a second device
+  doesn't wait ~20 s for the base's OOTX again (#47 finding 2).
