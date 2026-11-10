@@ -559,6 +559,9 @@ bool SessionImpl::SetUpDevice(const DeviceId& id, const std::string& config) {
     d.info.model = j.value("model_number", "");
     d.info.manufacturer = j.value("manufacturer", "");
     d.info.renderModel = j.value("render_model", "");
+    d.info.resourceRoot = j.value("resource_root", "");
+    d.info.inputProfile = j.value("input_profile", "");
+    d.info.registeredType = j.value("registered_device_type", "");
     d.info.controllerRole = j.value("tracked_controller_role", "");
     if (const auto r = roles_.find(id); r != roles_.end() && d.info.role != DeviceRole::Hmd) {
       // settings.json "roles": the values of tracked_controller_role.
@@ -586,6 +589,14 @@ bool SessionImpl::SetUpDevice(const DeviceId& id, const std::string& config) {
     Eigen::Isometry3d objectFromHead = Eigen::Isometry3d::Identity();
     if (j.contains("head")) AxesRotation(j.at("head"), &objectFromHead);
     else if (j.contains("trackref_from_head")) PoseArray(j.at("trackref_from_head"), &objectFromHead);
+    // Tundra Trackers ship an identity head, so their pose (and model) came out bottom-up
+    // (#40). The stock driver replaces exactly that case (in 0x1dec60): plus_x -1,0,0,
+    // plus_z 0,0,-1 (180 deg about Y), position 0,0,0.001577.
+    if (d.info.manufacturer == "Tundra Labs" && d.info.model == "Tundra Tracker" &&
+        objectFromHead.isApprox(Eigen::Isometry3d::Identity(), 1e-9)) {
+      AxesRotation(json{{"plus_x", {-1.0, 0.0, 0.0}}, {"plus_z", {0.0, 0.0, -1.0}}, {"position", {0.0, 0.0, 0.001577}}},
+                   &objectFromHead);
+    }
     d.imuFromHead = objectFromImu.inverse() * objectFromHead;
     model.serial = id;
     d.tracker = std::make_unique<DeviceTracker>(id, model, &room_);
@@ -654,9 +665,10 @@ void SessionImpl::UpdatePreinit(const DeviceId& id, const std::string& config) {
     {
       std::ofstream out(temp, std::ios::binary | std::ios::trunc);
       out << config;
+      out.close();  // a write error can show only when the buffer goes out (#43)
       if (!out) throw std::runtime_error("cannot write " + temp);
     }
-    std::filesystem::rename(temp, file->second);
+    platform::ReplaceFile(temp, file->second);  // rename doesn't replace a file on Windows
     Emit(SessionEventType::Log, id, id + ": device config differs from preinit; using the device's and updating " + file->second);
   } catch (const std::exception& e) {
     Emit(SessionEventType::Log, id, id + ": updating preinit " + file->second + ": " + e.what(), LogLevel::Warn);
@@ -1009,8 +1021,10 @@ bool SessionImpl::LightMovedLockedBase(const RoomSolveOutput& out) {
     // More than one device must say so when more than one sees the base: one device's
     // wrong view must not relearn the room.
     const int needDevices = std::min(2, std::max(1, b.checkedDevices));
+    // Devices that see it at all: one whose keyframes of it are all rejected is in neither
+    // checkedDevices nor devices, and alone it met a one-device rule (#42).
     if (b.rejected >= 15 && b.rejected * 4 >= b.seen && othersSeen >= 10 && othersRejected * 10 <= othersSeen &&
-        b.rejectingDevices >= std::min(needDevices, std::max(1, b.devices))) {
+        b.rejectingDevices >= std::min(2, std::max(1, b.seeingDevices))) {
       moved[serial] = {0, 0, kStrikes, b.rejected, b.seen};
       continue;
     }
@@ -1033,7 +1047,11 @@ bool SessionImpl::LightMovedLockedBase(const RoomSolveOutput& out) {
   // Every other base off at once (3+ bases): the origin moved, not all of them.
   int farOff = 0;
   for (const auto& [serial, m] : moved) farOff += m.rejected == 0;
-  if (others >= 2 && farOff == others && int(moved.size()) == others) {
+  const auto originCooling = lightCooldown_.find(origin);
+  const bool originCool = originCooling != lightCooldown_.end() && now_ < originCooling->second;
+  if (others >= 2 && farOff == others && int(moved.size()) == others && originCool) {
+    moved.clear();  // the origin was just relearned from this: nothing else is bumped in its place (#42)
+  } else if (others >= 2 && farOff == others && int(moved.size()) == others) {
     int strikes = kStrikes;
     for (const auto& [serial, m] : moved) strikes = std::max(strikes, m.strikes);
     moved = {{origin, {0, 0, strikes}}};
@@ -1065,11 +1083,14 @@ void SessionImpl::SolverMain() {
     newKeyframes_ = false;
     lastSolve_ = now_;
     const RoomSolveInput input = SolveInput();
-    const uint64_t resets = roomResets_;
+    const uint64_t resets = roomResets_, bumps = room_.Bumps();
     lock.unlock();
     const RoomSolveOutput out = SolveRoom(input);
     lock.lock();
-    if (resets == roomResets_) ApplySolve(out);  // a reset meanwhile: solved against the old room
+    // A reset meanwhile: solved against the old room. A base bumped meanwhile: solved from
+    // keyframes before the knock, it would re-place the base where it was and end the
+    // relearn (#42). The next solve, from the fresh keyframes, is soon.
+    if (resets == roomResets_ && bumps == room_.Bumps()) ApplySolve(out);
   }
 }
 
@@ -1290,6 +1311,9 @@ void SessionImpl::SaveSettings() {
     {
       std::ofstream out(temp);
       out << j.dump(2) << "\n";
+      out.close();
+      // A failed write must not replace the good file: its controllers and roles were lost (#43).
+      if (!out) throw std::runtime_error("cannot write " + temp);
     }
     platform::ReplaceFile(temp, target);
   } catch (const std::exception& e) {
@@ -1354,8 +1378,14 @@ void SessionImpl::ResetRoomLocked(const std::string& why) {
     if (b.seen) room_.OnBaseSeen(b.config, b.dynamic);
   if (persist_) {
     std::string err;
-    if (room_.Save(roomPath_, &err)) room_.ClearDirty();
-    roomFileSeen_ = true;
+    // Seen only once it's written: a failed write then looked like the file being
+    // deleted, and reset the room again every second (#43).
+    if (room_.Save(roomPath_, &err)) {
+      room_.ClearDirty();
+      roomFileSeen_ = true;
+    } else {
+      Emit(SessionEventType::Log, "", "saving the room map: " + err, LogLevel::Warn);
+    }
   }
   Emit(SessionEventType::RoomChanged, "", "room reset (" + why + "): every base station is relearned");
   CollectLogs(nullptr);

@@ -213,6 +213,8 @@ if(LH_BUILD_OPENVR_DRIVER AND LH_BUILD_USB AND OPENVR_INCLUDE_DIR)
   add_library(driver_lighthouse MODULE src/openvr/driver_lighthouse.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/stock_hmd.cpp src/openvr/pairing_mailbox.cpp src/openvr/telemetry_server.cpp $<TARGET_OBJECTS:lh_runtime>)
   if(WIN32)
     target_link_libraries(driver_lighthouse PRIVATE setupapi hid)  # stock_hmd: hiding devices from the stock DLL
+    # HmdDriverFactory and our hidapi, for drivers that hook HID access (the .def says why).
+    target_sources(driver_lighthouse PRIVATE src/openvr/driver_lighthouse.def)
     set(LH_OPENVR_PLATFORM win64)
   elseif(APPLE)
     set(LH_OPENVR_PLATFORM osx)
@@ -339,7 +341,8 @@ if(LH_BUILD_TESTS)
     set_tests_properties(capture_no_overwrite PROPERTIES WILL_FAIL TRUE)
   endif()
 
-  if(LH_BUILD_ORACLE_TESTS AND NOT WIN32 AND NOT APPLE)
+  # Only with the stock driver they dlopen (git-ignored): a fresh clone aborted ctest (#55).
+  if(LH_BUILD_ORACLE_TESTS AND NOT WIN32 AND NOT APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/driver_lighthouse.so")
     add_executable(lh_oracle_tests
       tests/oracle/oracle.cpp
       tests/oracle/test_lighthouse_model.cpp

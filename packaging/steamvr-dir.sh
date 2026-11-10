@@ -53,9 +53,17 @@ check_registration() {
 import json, os, sys
 mode, config, manifest, key = sys.argv[1:]
 path = os.path.join(config, 'appconfig.json')
+# Steam's list of every registered VR app: one that can't be read is left alone (#44),
+# rewriting it from {} dropped all the others.
 try:
     with open(path) as f: data = json.load(f)
-except (FileNotFoundError, ValueError): data = {}
+except FileNotFoundError: data = {}
+except (OSError, ValueError):
+    print(f"cannot read {path}; leaving it as it is (SteamVR update warning not {mode}ed)", file=sys.stderr)
+    sys.exit(0)
+if not isinstance(data, dict):
+    print(f"{path} isn't what Steam writes; leaving it as it is", file=sys.stderr)
+    sys.exit(0)
 paths = [p for p in data.get('manifest_paths') or [] if os.path.normpath(p) != os.path.normpath(manifest)]
 if mode == 'register': paths.append(manifest)
 data['manifest_paths'] = paths

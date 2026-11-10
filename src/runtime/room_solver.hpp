@@ -62,6 +62,7 @@ struct SolvedBase {
   // many fit the solved pose clearly better than the room's (`known`) one. A base that
   // really moved shows in more than one device; one device's bad view doesn't.
   int rejectingDevices = 0, checkedDevices = 0, supportingDevices = 0;
+  int seeingDevices = 0;  // every device with a keyframe of it, used or rejected (left-out ones aside)
 };
 
 struct RoomSolveInput {

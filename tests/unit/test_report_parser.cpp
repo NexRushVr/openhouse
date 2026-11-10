@@ -120,3 +120,41 @@ TEST(WirelessReconnect, ResetsProtocolClockAndImuEpoch) {
 }
 
 }  // namespace
+
+// #41: a section announced longer than the packet made Decode memcpy a negative length.
+TEST(Wv2Decoder, RejectsSectionsLongerThanThePacket) {
+  // meta + light, the meta section announced as 16 bytes in a 6-byte packet.
+  const uint8_t metaLight[6] = {0x00, 0x40 | 0x10 | 0x0f, 0x00, 0x00, 0x00, 0x00};
+  lh::usb::Wv2Decoder lh1Probe;
+  lh1Probe.opticalSub = 0;
+  lh1Probe.controllerSub = 0;
+  lh::usb::WirelessPacket out;
+  EXPECT_FALSE(lh1Probe.Decode(0, metaLight, 6, &out));
+  // input + light, the input announced as 16 bytes.
+  const uint8_t inputLight[5] = {0x00, 0x20 | 0x10 | 0x0f, 0x00, 0x00, 0x00};
+  lh::usb::Wv2Decoder input;
+  input.opticalSub = 0;
+  input.controllerSub = 1;
+  EXPECT_FALSE(input.Decode(0, inputLight, 5, &out));
+}
+
+// Every flag byte at every length a radio report can carry, from both probe states: nothing
+// may read or write outside the packet (run under AddressSanitizer to see it).
+TEST(Wv2Decoder, AnyShortPacketDecodesWithinItsBytes) {
+  for (int optical : {0, 1}) {
+    for (int controller : {0, 1, 2}) {
+      for (int flags = 0; flags < 256; ++flags) {
+        for (int n = 1; n <= 27; ++n) {
+          std::vector<uint8_t> packet(size_t(n), 0x5a);
+          if (n > 1) packet[1] = uint8_t(flags);
+          lh::usb::Wv2Decoder d;
+          d.opticalSub = optical;
+          d.controllerSub = controller;
+          lh::usb::WirelessPacket out;
+          d.Decode(0, packet.data(), n, &out);
+        }
+      }
+    }
+  }
+  SUCCEED();
+}

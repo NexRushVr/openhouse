@@ -349,6 +349,14 @@ int TrimCommand(int argc, char** argv) {
   lh::usb::RawCaptureReader in;
   lh::usb::RawCaptureWriter out;
   if (!in.Open(argv[2])) { fprintf(stderr, "cannot open %s\n", argv[2]); return 1; }
+  {
+    // Opening the output truncates it: the same file as the input erased the recording.
+    std::error_code ec;
+    if (std::filesystem::equivalent(argv[2], argv[3], ec)) {
+      fprintf(stderr, "the output is the input (%s): write the trimmed copy somewhere else\n", argv[3]);
+      return 1;
+    }
+  }
   if (!out.Open(argv[3])) { fprintf(stderr, "cannot create %s\n", argv[3]); return 1; }
   double start = -1;
   size_t kept = 0, dropped = 0;

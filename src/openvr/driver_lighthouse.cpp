@@ -75,6 +75,14 @@ double SteadyNow() {
   return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+bool EqualsNoCase(const std::string& a, const char* b) {
+  const size_t n = std::strlen(b);
+  if (a.size() != n) return false;
+  for (size_t i = 0; i < n; ++i)
+    if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) return false;
+  return true;
+}
+
 // Buttons, axes and haptics. The stock driver asks for IVRDriverInput_005, whose first
 // slots (Create/UpdateBoolean, CreateScalar, CreateHaptic) are laid out as in _004.
 // Windows SteamVR accepted booleans sent through _004 but never applied them (no button
@@ -196,6 +204,7 @@ struct DeviceStatic {
   std::string baseChannel;  // base stations: "A" "b" "c", lhbs multi "1".."4"
   lh::ControllerType controllerType = lh::ControllerType::Index;
   bool lh2 = false;         // base stations: a 2.0 one
+  std::string resourceRoot, inputProfile, registeredType;  // trackers: the config's own (lh::DeviceInfo)
 };
 
 class Device : public ITrackedDeviceServerDriver {
@@ -301,6 +310,13 @@ class Device : public ITrackedDeviceServerDriver {
     if (!active_ || universe == universe_) return;
     universe_ = universe;
     VRProperties()->SetUint64Property(container_, Prop_CurrentUniverseId_Uint64, universe);
+  }
+  // The receiver it's connected through, as the stock driver publishes it. Tools that
+  // power devices off (OyasumiVR, #37) need it: they run lighthouse_console against it.
+  void SetDongle(const std::string& receiver) {
+    if (!active_ || receiver == dongle_) return;
+    dongle_ = receiver;
+    VRProperties()->SetStringProperty(container_, Prop_ConnectedWirelessDongle_String, receiver.c_str());
   }
 
   // Tracked devices: called from the driver thread with the latest liblh data.
@@ -525,26 +541,38 @@ class Device : public ITrackedDeviceServerDriver {
         break;
       }
       default: {  // trackers (inputs ignored by design)
+        // As the stock driver (0x1cf860, 0x1d69f0): an HTC tracker gets HTC's profile and
+        // type, and "vr_tracker_vive_1_0" becomes {htc}vr_tracker_vive_3_0 on a 3.0. Any
+        // other maker's (Tundra Labs) keeps its own resource root, profile and icons
+        // (#29, #40): they were all HTC's.
+        const bool htc = info_.manufacturer.empty() || EqualsNoCase(info_.manufacturer, "htc");
+        const std::string root = htc || info_.resourceRoot.empty() ? "htc" : info_.resourceRoot;
+        std::string renderModel = info_.renderModel.empty() ? "{htc}vr_tracker_vive_1_0" : info_.renderModel;
+        // (RenderModel() has already put {htc} in front of a bare name.)
+        if (htc && EqualsNoCase(renderModel, "{htc}vr_tracker_vive_1_0") && info_.model.rfind("VIVE Tracker 3.0", 0) == 0)
+          renderModel = "{htc}vr_tracker_vive_3_0";
+        const std::string profile = htc || info_.inputProfile.empty() ? "{htc}/input/vive_tracker_profile.json" : info_.inputProfile;
+        const std::string registered = htc || info_.registeredType.empty() ? "htc/vive_tracker" + info_.serial : info_.registeredType;
         props->SetStringProperty(c, Prop_ManufacturerName_String, info_.manufacturer.empty() ? "HTC" : info_.manufacturer.c_str());
         props->SetStringProperty(c, Prop_ModelNumber_String, info_.model.empty() ? "VIVE Tracker" : info_.model.c_str());
-        props->SetStringProperty(c, Prop_ResourceRoot_String, "htc");
-        props->SetStringProperty(c, Prop_ControllerType_String, "vive_tracker");
-        props->SetStringProperty(c, Prop_InputProfilePath_String, "{htc}/input/vive_tracker_profile.json");
-        props->SetStringProperty(c, Prop_RenderModelName_String,
-                                 info_.renderModel.empty() ? "{htc}vr_tracker_vive_1_0" : info_.renderModel.c_str());
-        props->SetStringProperty(c, Prop_RegisteredDeviceType_String, ("htc/vive_tracker" + info_.serial).c_str());
+        props->SetStringProperty(c, Prop_ResourceRoot_String, root.c_str());
+        props->SetStringProperty(c, Prop_ControllerType_String, "vive_tracker");  // Tundra's profile says so too
+        props->SetStringProperty(c, Prop_InputProfilePath_String, profile.c_str());
+        props->SetStringProperty(c, Prop_RenderModelName_String, renderModel.c_str());
+        props->SetStringProperty(c, Prop_RegisteredDeviceType_String, registered.c_str());
         props->SetInt32Property(c, Prop_ControllerRoleHint_Int32, TrackedControllerRole_OptOut);
         props->SetInt32Property(c, Prop_DeviceClass_Int32, TrackedDeviceClass_GenericTracker);
         props->SetBoolProperty(c, Prop_DeviceProvidesBatteryStatus_Bool, true);
         props->SetBoolProperty(c, Prop_Identifiable_Bool, true);  // enables SteamVR's Identify button
-        props->SetStringProperty(c, Prop_NamedIconPathDeviceOff_String, "{htc}/icons/tracker_status_off.png");
-        props->SetStringProperty(c, Prop_NamedIconPathDeviceSearching_String, "{htc}/icons/tracker_status_searching.gif");
-        props->SetStringProperty(c, Prop_NamedIconPathDeviceSearchingAlert_String, "{htc}/icons/tracker_status_searching_alert.gif");
-        props->SetStringProperty(c, Prop_NamedIconPathDeviceReady_String, "{htc}/icons/tracker_status_ready.png");
-        props->SetStringProperty(c, Prop_NamedIconPathDeviceReadyAlert_String, "{htc}/icons/tracker_status_ready_alert.png");
-        props->SetStringProperty(c, Prop_NamedIconPathDeviceNotReady_String, "{htc}/icons/tracker_status_error.png");
-        props->SetStringProperty(c, Prop_NamedIconPathDeviceStandby_String, "{htc}/icons/tracker_status_standby.png");
-        props->SetStringProperty(c, Prop_NamedIconPathDeviceAlertLow_String, "{htc}/icons/tracker_status_ready_low.png");
+        const std::string icons = "{" + root + "}/icons/tracker_status_";
+        props->SetStringProperty(c, Prop_NamedIconPathDeviceOff_String, (icons + "off.png").c_str());
+        props->SetStringProperty(c, Prop_NamedIconPathDeviceSearching_String, (icons + "searching.gif").c_str());
+        props->SetStringProperty(c, Prop_NamedIconPathDeviceSearchingAlert_String, (icons + "searching_alert.gif").c_str());
+        props->SetStringProperty(c, Prop_NamedIconPathDeviceReady_String, (icons + "ready.png").c_str());
+        props->SetStringProperty(c, Prop_NamedIconPathDeviceReadyAlert_String, (icons + "ready_alert.png").c_str());
+        props->SetStringProperty(c, Prop_NamedIconPathDeviceNotReady_String, (icons + "error.png").c_str());
+        props->SetStringProperty(c, Prop_NamedIconPathDeviceStandby_String, (icons + "standby.png").c_str());
+        props->SetStringProperty(c, Prop_NamedIconPathDeviceAlertLow_String, (icons + "ready_low.png").c_str());
         break;
       }
     }
@@ -720,6 +748,7 @@ class Device : public ITrackedDeviceServerDriver {
   }
   std::atomic<uint32_t> id_{k_unTrackedDeviceIndexInvalid};
   PropertyContainerHandle_t container_ = k_ulInvalidPropertyContainer;
+  std::string dongle_;  // SetDongle
   std::mutex poseMutex_;
   DriverPose_t pose_{};
   double recTime_ = -1e300;
@@ -932,10 +961,24 @@ class Provider : public IServerTrackedDeviceProvider {
       else stock_.Load(path, context_, [](const std::string& text) { Log(text); });
     }
     stock_.RunFrame();
-    if (session_) pairing_.Poll(*session_, ExpectedControllerType());
+    if (session_) {
+      std::string expected;
+      {
+        std::lock_guard lock(expectedMutex_);
+        expected = expectedControllers_;
+      }
+      // A malformed mailbox message must not leave RunFrame: it ends vrserver (#45).
+      try {
+        pairing_.Poll(*session_, expected);
+      } catch (const std::exception& e) {
+        Log(std::string("pairing: ignored a request: ") + e.what());
+      }
+    }
   }
 
   // The headset's expected controllers (Prop_ExpectedControllerType_String), "" if none.
+  // Main thread only: it is the one that changes devices_ (RunFrame reads the copy,
+  // expectedControllers_; walking the map there raced Main's inserts, #45).
   std::string ExpectedControllerType() const {
     for (const auto& [serial, device] : devices_)
       if (device && device->IsHmd() && device->Active()) return device->StringProperty(Prop_ExpectedControllerType_String);
@@ -1042,9 +1085,21 @@ class Provider : public IServerTrackedDeviceProvider {
           d->SetRawTransform(rawFromWorld);
           d->SetUniverse(universe);
         }
+        {
+          const std::string expected = ExpectedControllerType();
+          std::lock_guard lock(expectedMutex_);
+          expectedControllers_ = expected;
+        }
         for (const auto& b : snapshot_.bases) {
           auto found = devices_.find(b.serial);
           if (found != devices_.end()) found->second->UpdateBase(b);
+        }
+        std::map<std::string, std::string> dongles;  // device -> its receiver
+        for (const auto& r : session_->Receivers())
+          if (!r.connected.empty()) dongles[r.connected] = r.serial;
+        for (auto& [serial, d] : devices_) {
+          const auto r = dongles.find(serial);
+          if (r != dongles.end()) d->SetDongle(r->second);
         }
       }
       if (now - lastTuning_ >= 1.0) {  // the SteamVR settings page: applies while playing
@@ -1099,6 +1154,9 @@ class Provider : public IServerTrackedDeviceProvider {
       if (devices_.count(d.info.serial) || !d.info.enabled || d.info.role == lh::DeviceRole::Hmd) continue;
       DeviceStatic info{d.info.serial, d.info.model, d.info.manufacturer, RenderModel(d.info.renderModel), d.info.controllerRole,
                         d.info.role, {}, d.info.controllerType};
+      info.resourceRoot = d.info.resourceRoot;
+      info.inputProfile = d.info.inputProfile;
+      info.registeredType = d.info.registeredType;
       Add(info, d.info.role == lh::DeviceRole::Controller ? TrackedDeviceClass_Controller
                                                           : TrackedDeviceClass_GenericTracker);
     }
@@ -1132,6 +1190,8 @@ class Provider : public IServerTrackedDeviceProvider {
   std::set<std::string> loggedHaptic_;
   std::atomic<bool> loggedUnrouted_{false};
   std::mutex eventMutex_;
+  std::mutex expectedMutex_;
+  std::string expectedControllers_;  // ExpectedControllerType(), from Main for RunFrame
   std::deque<VREvent_t> hapticEvents_;
   std::unique_ptr<lh::Session> session_;
   IVRDriverContext* context_ = nullptr;
@@ -1168,9 +1228,17 @@ class Provider : public IServerTrackedDeviceProvider {
     reportThread_ = std::thread([this, options] {
       // The USB thread closes the capture on its next pass: let it finish the file.
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
-      std::string error;
-      const std::string path = lh::SaveBugReport(options, &error);
-      Log(path.empty() ? "bug report failed: " + error : "bug report saved: " + path);
+      // Nothing thrown here may leave the thread: that is std::terminate, and it took
+      // vrserver down with the report unwritten (#34).
+      try {
+        std::string error;
+        const std::string path = lh::SaveBugReport(options, &error);
+        Log(path.empty() ? "bug report failed: " + error : "bug report saved: " + path);
+      } catch (const std::exception& e) {
+        Log(std::string("bug report failed: ") + e.what() + "; the recording stays in " + options.recording);
+      } catch (...) {
+        Log("bug report failed; the recording stays in " + options.recording);
+      }
       reportDone_ = true;
     });
   }
@@ -1202,7 +1270,18 @@ class Provider : public IServerTrackedDeviceProvider {
   // which the installer puts in the lighthouse driver's resources). Missing values are
   // written with their defaults first, so the page shows them.
   static constexpr const char* kSection = "driver_openhouse";
+  // On the driver thread: a throw from here (a filesystem call when recording starts or
+  // stops, #34) must not end it, or vrserver with it.
   void ApplyTuning(bool writeDefaults) {
+    try {
+      ApplyTuningOnce(writeDefaults);
+    } catch (const std::exception& e) {
+      Log(std::string("applying the SteamVR settings failed: ") + e.what());
+    } catch (...) {
+      Log("applying the SteamVR settings failed");
+    }
+  }
+  void ApplyTuningOnce(bool writeDefaults) {
     if (!session_ || !VRSettings()) return;
     auto number = [&](const char* key, float fallback) {
       EVRSettingsError e = VRSettingsError_None;

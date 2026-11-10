@@ -67,6 +67,9 @@ fs::path EnvPath(const wchar_t* name) {
 
 std::string ReadFile(const fs::path& p) {
   std::ifstream in(p, std::ios::binary);
+  // An unreadable driver read as "" looked like SteamVR's own, and uninstall deleted the
+  // stock backup (#44): stop instead.
+  if (!in) throw Failure("Could not read " + Show(p) + " (is SteamVR still running?)");
   return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
@@ -193,8 +196,28 @@ struct Paths {
 void SetCheckRegistration(const Paths& p, bool registerIt) {
   const fs::path config = SteamConfig(p.steamvr);
   const fs::path appconfig = config / "appconfig.json";
-  ordered_json data = ReadJson(appconfig);
-  if (!data.is_object()) data = ordered_json::object();
+  ordered_json data = ordered_json::object();
+  {
+    // Steam's list of every registered VR app: one we can't read or parse is left alone.
+    // Rewriting it from an empty object dropped all the others (#44).
+    std::error_code ec;
+    if (fs::exists(appconfig, ec)) {
+      std::ifstream in(appconfig, std::ios::binary);
+      const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      try {
+        if (!in && !in.eof()) throw std::runtime_error("unreadable");
+        if (!text.empty()) data = ordered_json::parse(text);
+      } catch (const std::exception&) {
+        std::cout << "Could not read " << Show(appconfig) << "; leaving it as it is (the update check isn't "
+                  << (registerIt ? "registered" : "unregistered") << ").\n";
+        return;
+      }
+      if (!data.is_object()) {
+        std::cout << Show(appconfig) << " isn't what Steam writes; leaving it as it is.\n";
+        return;
+      }
+    }
+  }
   ordered_json kept = ordered_json::array();
   const std::string manifest = Show(p.checkManifest);
   if (data.contains("manifest_paths") && data["manifest_paths"].is_array())
@@ -211,7 +234,10 @@ void SetCheckRegistration(const Paths& p, bool registerIt) {
 
 // ---- the settings page schema ----
 
-bool HasOurSection(const fs::path& schema) { return ReadFile(schema).find("driver_openhouse") != std::string::npos; }
+bool HasOurSection(const fs::path& schema) {
+  std::error_code ec;
+  return fs::exists(schema, ec) && ReadFile(schema).find("driver_openhouse") != std::string::npos;
+}
 
 void InstallSchema(const Paths& p) {
   const fs::path source = p.here / "settingsschema.vrsettings";
@@ -329,7 +355,7 @@ int Run(int argc, wchar_t** argv) {
   if (!fs::exists(p.target)) throw Failure("Driver not found at " + Show(p.target) + ". Run this with --steamvr PATH.");
   if (action == "status") {
     std::cout << "Driver: " << Show(p.target) << "\n"
-              << "openhouse installed: " << (ReadFile(p.target).find(kMarker) != std::string::npos ? "yes" : "no") << "\n"
+              << "openhouse installed: " << (fs::exists(p.target) && ReadFile(p.target).find(kMarker) != std::string::npos ? "yes" : "no") << "\n"
               << "Stock backup present: " << (fs::exists(p.backup) ? "yes" : "no") << "\n";
     return 0;
   }

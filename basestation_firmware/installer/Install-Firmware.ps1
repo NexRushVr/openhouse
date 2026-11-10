@@ -36,7 +36,8 @@ if (-not (Test-Vectors $imageBytes)) { Fail "$image is not a valid firmware imag
 # (NO_ISP, CRP1-3): such an image is never written.
 if ($imageBytes.Length -ge 0x300) {
   $crp = [BitConverter]::ToUInt32($imageBytes, 0x2FC)
-  if (@(0x4E697370, 0x12345678, 0x87654321, 0x43218765) -contains $crp) { Fail "$image would lock the base station's bootloader; refusing to write it" }
+  # As text: PowerShell types 0x87654321 as a negative Int32, so CRP2 never matched (#58).
+  if (@('4e697370', '12345678', '87654321', '43218765') -contains $crp.ToString('x8')) { Fail "$image would lock the base station's bootloader; refusing to write it" }
 }
 if ($imageBytes.Length -gt 131072) { Fail "$image is larger than the base station's 128 KB flash" }
 
