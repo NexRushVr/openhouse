@@ -1,6 +1,6 @@
 # 1.0 and 2.0 base stations together
 
-Not stock. Off by default: "Use 1.0 and 2.0 base stations together (experimental)" on the SteamVR
+Not stock. Off by default: "Enable Mixed Basestations (1.0 and 2.0 together, EXPERIMENTAL, might change the room map)", in the "openhouse: Experimental" section of the SteamVR
 settings page (`driver_openhouse/mixedLight`), `MixedLightOptions` in `lh/session.hpp`, `lhtool session
 ... --mixed-light` for replays. Off, or with no 2.0 station known, every device is on the usual
 light-mode choice (`Session::UpdateLightMode`) with no sorter: the output is the same as without this code.
@@ -94,7 +94,7 @@ About half of that drift is the 2.0 stations' rotors slowing as they warm up aft
 over 10-15 minutes, which every device sees alike), half each device's own. The 1.0 station's flashes
 keep a steady period, but a 5 s window of them is good to only about 0.2 ppm, too little to correct with.
 
-**The scout** (`RotorScout`, `Session::UpdateScout`, switch "1.0 + 2.0: headset times the 2.0 stations",
+**The scout** (`RotorScout`, `Session::UpdateScout`, switch "Mixed Basestations: headset times the 2.0 stations",
 on). The headset is in LH2 mode throughout, so it has each rotor's period over the last 5 s of real words
 (`PulseSorter::RecentPeriod`, words more than 20 us off left out). When a device comes back to LH1 mode
 with a new line, the line follows the change in the headset's period since (`PulseSorter::SetDrift`),
