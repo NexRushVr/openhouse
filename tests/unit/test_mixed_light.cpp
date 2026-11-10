@@ -285,8 +285,35 @@ TEST(MixedLight, TellsA1Point0OnlyDeviceApart) {
   EXPECT_TRUE(LooksLh1Only(v));
 }
 
+// In use for the room's 2.0 stations, none of which has been seen: they may be off, so every device, the
+// headset too, takes a short look in LH2 mode and goes back to the 1.0 light, rather than waiting blind.
+TEST(MixedLight, OnlyLooksForUnseen2Point0Stations) {
+  MixedLightView v = InLh2(0);
+  v.readyRotors = 0;
+  v.tracking = false;
+  v.lh2Unseen = true;
+  v.inMode = v.dark = v.sinceSent = 2.9;
+  EXPECT_EQ(Mode(v), -1);
+  v.inMode = v.dark = v.sinceSent = 3.0;
+  EXPECT_EQ(Mode(v), 0) << "nothing seen in 3 s: back to the 1.0 light";
+  v.stayLh2 = true;  // a headset
+  EXPECT_EQ(Mode(v), 0);
+  v.lh2Unseen = false;
+  EXPECT_EQ(Mode(v), -1) << "once one is seen, the headset stays in LH2 mode";
+  v.stayLh2 = false;
+  EXPECT_EQ(Mode(v), -1) << "and the others wait for stations still waking";
+
+  MixedLightView lh1 = InLh1(14.9);
+  lh1.readyRotors = 0;
+  lh1.lh2Unseen = true;
+  lh1.stayLh2 = true;
+  EXPECT_EQ(Mode(lh1), -1) << "a headset on the 1.0 light while none is seen";
+  lh1.inMode = 15.0;
+  EXPECT_EQ(Mode(lh1), 1) << "until the next look";
+}
+
 // In use only where there's a 2.0 station to sort, and not for a room whose 2.0 stations stay dark
-// (switched off, or not woken): there the headset, held in LH2 mode, would see nothing.
+// (switched off, or not woken): there devices would go on looking for their light.
 TEST(MixedLight, InUseOnlyWithA2Point0StationToSort) {
   using lh::runtime::ChooseMixedRoom;
   using lh::runtime::MixedRoomStep;
@@ -300,9 +327,9 @@ TEST(MixedLight, InUseOnlyWithA2Point0StationToSort) {
   EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::NotInUse) << "switched off";
   v.enabled = true;
 
-  v.inUse = 59;
+  v.inUse = 89;
   EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse) << "the stations may still be waking";
-  v.inUse = 60;
+  v.inUse = 90;
   EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::RoomDark);
   v.sinceLh2Light = 10;
   EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse) << "a device had 2.0 light lately";
