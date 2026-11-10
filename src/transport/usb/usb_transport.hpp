@@ -124,6 +124,10 @@ class UsbTransport {
   // Whether its radio is in Bluetooth mode; nullopt if there is none or it didn't answer.
   std::optional<bool> BluetoothRadioOn();
 
+  // The radio serial of the device connected to an open receiver (dongle), 0 if none, or
+  // nullopt if it didn't answer. A short query, for the watchdog (watchdog.cpp).
+  static std::optional<uint32_t> ConnectedSerial(hid_device_* receiver);
+
   // Loads a cached SteamVR config for a serial ("LHR-0704E07A"), or "".
   static std::string LoadSteamConfig(const std::string& dir, const std::string& serial);
 

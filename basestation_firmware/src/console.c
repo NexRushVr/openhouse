@@ -96,6 +96,8 @@ static bool parse_float(const char *s, float *out)
     if (*s == '.') for (s++; *s >= '0' && *s <= '9'; s++, nd++) { scale /= 10; v += (*s - '0') * scale; }
     if ((*s | 0x20) == 'e') {
         long e; if (!parse_long(s + 1, &e)) return false;
+        /* Past float's range either way: refused, not two billion multiplies (#56.2). */
+        if (e > 60 || e < -60) return false;
         ex = e; s += strlen(s);
     }
     if (!nd || *s) return false;

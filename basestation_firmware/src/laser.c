@@ -230,6 +230,11 @@ static void apc_sample(int n)
     if (n) { P.laser_1_pwr_detected = det; P.laser_1_pwr_average = pw; }
     else   { P.laser_0_pwr_detected = det; P.laser_0_pwr_average = pw; }
     if (!P.laser_apc || !apc_enabled) return;
+    /* One step per write to the ISL58303: until laser_poll has written the last one, the
+     * power measured is still the old current's, and stepping on it ran the current ahead
+     * of the chip, up to the safety window and a laser fault (red blinking), once the main
+     * loop was slow or the diode warmed (#57.1). */
+    if (current_dirty) return;
 
     float target = n ? P.laser_1_pwr : P.laser_0_pwr;
     uint8_t *cur = n ? &P.laser_1_current : &P.laser_0_current;
