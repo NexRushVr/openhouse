@@ -188,11 +188,14 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
   mid-session left it out of use, and the headset and the wand kept tracking (99-100 % over the 30 s that
   followed). Off, the default, a 1.0-only setup gets the same poses as on master, byte for byte. In a
   2.0-only room it still sorts, with visits and their dropouts, for nothing gained.
-* A room of both kinds with its 2.0 stations off or asleep is still in use, since the room in use has
-  them. The headset is then held in LH2 mode, where it sees nothing from a 1.0 station, so it doesn't
-  track; the controllers spend 30 s of every 45 in LH2 mode, blind. Read from the code, not seen live
-  (the live run of that room with only its 1.0 station on had the switch off). Without the radio-mode fix,
-  SteamVR doesn't wake the stations on a setup like this one, which makes it likelier.
+* A room of both kinds with its 2.0 stations off or asleep (without the radio-mode fix SteamVR doesn't
+  wake them on a setup like this one) comes into use, since the room in use has them. The headset is held
+  in LH2 mode there and sees nothing from a 1.0 station, so it can't track, and the controllers spend 30 s
+  of every 45 in LH2 mode, blind. So with no 2.0 light from any device for 60 s after coming into use, and
+  no 2.0 station seen, it stands down for that room (`runtime::ChooseMixedRoom`, a warning in the log): the
+  usual choice then puts every device in LH1 mode on the 1.0 light, as on master. Stations SteamVR woke showed
+  their first light 35-42 s after it started, and up to 23 s after this came into use. 2.0 stations turned
+  on after that aren't seen this session, as on master; turning the switch off and on tries again.
 * The first time, a room needs a 2.0 station seen, or in the room openhouse has, before this is in use. If
   the room in use was learned without them, devices beside a lit 1.0 station stay in LH1 mode and never see
   the 2.0 stations, as on master. Turning the 1.0 station off once lets them be seen; after that the room

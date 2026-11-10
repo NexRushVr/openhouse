@@ -66,6 +66,22 @@ MixedLightStep ChooseMixedLight(const MixedLightView& view, double visitEvery);
 // past a re-send of the command (5 s), and never a beam word.
 bool LooksLh1Only(const MixedLightView& view);
 
+// Whether 1.0 + 2.0 is in use (Session::UpdateMixedRoom): only where there's a 2.0 station to sort.
+struct MixedRoomView {
+  bool enabled = false;          // the switch
+  bool lh2Seen = false;          // a 2.0 station seen this session
+  bool lh2InRoom = false;        // the room in use has one, and it wasn't found dark
+  double inUse = -1;             // s in use so far; -1: not in use
+  double sinceLh2Light = 1e300;  // s since any device last had 2.0 light
+};
+enum class MixedRoomStep { NotInUse, InUse, RoomDark };
+// s in use for the room's 2.0 stations alone with no 2.0 light from any device: they're off or asleep,
+// and the headset, held in LH2 mode, would see nothing. Stations SteamVR woke showed their first light
+// 35-42 s after it started, and up to 23 s after this came into use.
+constexpr double kLh2RoomDark = 60;
+// RoomDark: not in use for that room from now on (until the switch is turned on again).
+MixedRoomStep ChooseMixedRoom(const MixedRoomView& view);
+
 // The scout. Between a device's visits to LH2 mode its line for a 2.0 rotor runs off, about half of it
 // because the rotor's speed changes (stations warm for minutes after waking: 1-2.5 ppm over 10-15 min,
 // seen by every device alike). A device in LH2 mode all the while, the headset, measures that speed, so

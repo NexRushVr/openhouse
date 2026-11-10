@@ -89,4 +89,10 @@ MixedLightStep ChooseMixedLight(const MixedLightView& v, double visitEvery) {
 
 bool LooksLh1Only(const MixedLightView& v) { return v.mode == 1 && v.inMode >= kLh1OnlyAfter && v.lh1Pulses && !v.everLh2; }
 
+MixedRoomStep ChooseMixedRoom(const MixedRoomView& v) {
+  if (!v.enabled || !(v.lh2Seen || v.lh2InRoom)) return MixedRoomStep::NotInUse;
+  if (!v.lh2Seen && v.inUse >= 0 && std::min(v.inUse, v.sinceLh2Light) >= kLh2RoomDark) return MixedRoomStep::RoomDark;
+  return MixedRoomStep::InUse;
+}
+
 }  // namespace lh::runtime

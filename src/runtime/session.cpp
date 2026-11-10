@@ -321,6 +321,9 @@ class SessionImpl final : public Session, public InputSinkBase {
   bool persist_ = false;
   MixedLightOptions mixed_;  // SetMixedLight
   bool mixedActive_ = false;  // mixed_.enabled, and a 2.0 station to sort (UpdateMixedRoom)
+  double mixedSince_ = 0;     // when mixedActive_ last changed
+  double lastLh2Light_ = -1e300;  // the latest beam word from any device
+  std::string darkRoom_;      // a room whose 2.0 stations were found off (UpdateMixedRoom)
   double lastScout_ = -1e300;
   std::deque<SessionEvent> events_;
   mutable double now_ = 0;  // latest host time seen (live: steady clock)
@@ -949,7 +952,7 @@ void SessionImpl::OnLh2BeamWord(const DeviceId& id, const Lh2BeamWord& word) {
   if (found == devices_.end() || !found->second.tracker) return;
   Touch(found->second, word.time);
   found->second.lastGoodLight = now_;
-  found->second.lastBeam = now_;
+  found->second.lastBeam = lastLh2Light_ = now_;
   found->second.lastBeamDeviceTime = word.time;
   found->second.everLh2 = true;
   if (found->second.lh1Only) {  // it can do LH2 mode after all
@@ -1486,12 +1489,26 @@ void SessionImpl::StartMixedLight(Device& d) {
 // there, it would also hold back lhbs multi-station detection.
 void SessionImpl::UpdateMixedRoom() {
   const auto* room = room_.Active();
-  uint32_t lh2 = 0;
-  for (const auto& [serial, b] : bases_)
-    if (b.config.model != 1 && !lh2 && (b.seen || (room && room->bases.count(serial)))) lh2 = serial;
-  const bool active = mixed_.enabled && lh2;
+  uint32_t seen = 0, inRoom = 0;
+  for (const auto& [serial, b] : bases_) {
+    if (b.config.model == 1) continue;
+    if (b.seen && !seen) seen = serial;
+    if (room && room->bases.count(serial) && !inRoom) inRoom = serial;
+  }
+  // The room's 2.0 stations alone can be off or asleep: then it stands down for that room
+  // (runtime::ChooseMixedRoom), and the usual choice puts devices on the 1.0 light.
+  runtime::MixedRoomView view;
+  view.enabled = mixed_.enabled;
+  view.lh2Seen = seen != 0;
+  view.lh2InRoom = inRoom && room->id != darkRoom_;
+  view.inUse = mixedActive_ ? now_ - mixedSince_ : -1;
+  view.sinceLh2Light = now_ - lastLh2Light_;
+  const auto step = runtime::ChooseMixedRoom(view);
+  if (step == runtime::MixedRoomStep::RoomDark) darkRoom_ = room->id;
+  const bool active = step == runtime::MixedRoomStep::InUse;
   if (active == mixedActive_) return;
   mixedActive_ = active;
+  mixedSince_ = now_;
   // Starting, every device chooses again (StartMixedLight). Switched off, every device that was mixing goes
   // to LH2 mode, 2.0 light alone, and the usual choice goes on from there (a room without 2.0 stations,
   // the other way to stop, is left to the usual choice as it is). Not choosing afresh: in a room of
@@ -1510,9 +1527,15 @@ void SessionImpl::UpdateMixedRoom() {
     Emit(SessionEventType::Log, id, id + ": light mode LH2 (1.0 + 2.0 switched off)");
   }
   char text[160];
-  if (active) std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: in use (2.0 base %08X in the room)", lh2);
-  else std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: not in use");
-  Emit(SessionEventType::Log, "", text, LogLevel::Info);
+  if (active)
+    std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: in use (2.0 base %08X %s)", seen ? seen : inRoom,
+                  seen ? "seen" : "in the room");
+  else if (step == runtime::MixedRoomStep::RoomDark)
+    std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: not in use (no 2.0 light for %.0f s: the room's 2.0 stations look off)",
+                  runtime::kLh2RoomDark);
+  else
+    std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: not in use");
+  Emit(SessionEventType::Log, "", text, step == runtime::MixedRoomStep::RoomDark ? LogLevel::Warn : LogLevel::Info);
 }
 
 void SessionImpl::SetMixedLight(const MixedLightOptions& options) {
@@ -1526,6 +1549,7 @@ void SessionImpl::SetMixedLight(const MixedLightOptions& options) {
       d.modeSince = now_;
   }
   const bool switched = options.enabled != mixed_.enabled;
+  if (switched) darkRoom_.clear();  // turning it on again tries a dark room's 2.0 stations again
   mixed_ = options;
   auto onOff = [](bool on) { return on ? "on" : "off"; };
   Emit(SessionEventType::Log, "", std::string("1.0 + 2.0 base stations together: switch ") + onOff(options.enabled) + " (controllers " +
