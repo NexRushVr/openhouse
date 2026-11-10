@@ -133,7 +133,9 @@ void SobDisambiguator::Advance(double t) {
 void SobDisambiguator::Skip(Channel& c, long revolutions) {
   if (revolutions <= 0) return;
   c.framer.Reset();  // the fast path needs an unbroken frame
-  for (long i = 0; i < std::min<long>(revolutions, 443); ++i) { c.ring.Push(0xff); ++c.ringPushes; }
+  // The ring is one 443-slot lap: only the remainder moves it. Capping at 443 left it
+  // n % 443 slots out of step after a longer gap (#48.3).
+  for (long i = 0; i < revolutions % 443; ++i) { c.ring.Push(0xff); ++c.ringPushes; }
 }
 
 void SobDisambiguator::PushOotx(Channel& c, int channel, int bit) {
