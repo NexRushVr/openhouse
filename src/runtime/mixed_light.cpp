@@ -12,6 +12,7 @@ constexpr double kMaxVisit = 8.0;     // s, when a rotor is still learning or tr
 constexpr double kMaxNaming = 25.0;   // s: identifying a station takes about 9 s of steady light
 constexpr double kMaxNamingLost = 60.0;  // s with no pose: leaving would start the 9 s over, for little
 constexpr double kWakeDark = 30.0;    // s dark in LH2 mode knowing no rotors: stations may be waking
+constexpr double kLook = 3.0;         // s, the same with no 2.0 station seen yet: a lit one's light comes in 1 s
 constexpr double kVisitDark = 4.0;    // s dark in LH2 mode knowing rotors: nothing more to learn
 constexpr double kLh1Dark = 5.0;      // s with no pulses at all in LH1 mode
 constexpr double kNoRotorsRetry = 15.0;  // s in LH1 mode knowing no rotors, before looking again
@@ -64,13 +65,13 @@ bool MixesLight(DeviceRole role, const MixedLightOptions& options) {
 MixedLightStep ChooseMixedLight(const MixedLightView& v, double visitEvery) {
   if (v.mode < 0) return {1, "start in LH2"};
   const bool resend = v.dark >= kResend && v.sinceSent >= kResend;
-  if (v.stayLh2) {
+  if (v.stayLh2 && !v.lh2Unseen) {
     if (v.mode != 1) return {1, "stays in LH2"};
     return resend ? MixedLightStep{1, "re-send"} : MixedLightStep{};
   }
   if (v.mode == 1) {
     if (v.readyRotors == 0) {
-      if (v.dark >= kWakeDark) return {0, "no 2.0 light"};
+      if (v.dark >= (v.lh2Unseen ? kLook : kWakeDark)) return {0, "no 2.0 light"};
     } else {
       const bool done = v.learningRotors == 0 && v.unnamedRotors == 0 && v.tracking;
       if (done && v.inMode >= kMinVisit) return {0, "rotors ready"};

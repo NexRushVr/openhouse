@@ -52,6 +52,9 @@ struct MixedLightView {
   bool calm = false;       // slow enough to go half a second without light
   bool lh1Pulses = false;  // LH1 pulses within the last half second
   bool everLh2 = false;    // has sent a beam word this session
+  // In use for the room's 2.0 stations, none seen yet this session: they may be off, so every device
+  // (the headset too) only looks for their light now and then, tracking on the 1.0 light in between.
+  bool lh2Unseen = false;
 };
 
 struct MixedLightStep {
@@ -75,10 +78,10 @@ struct MixedRoomView {
   double sinceLh2Light = 1e300;  // s since any device last had 2.0 light
 };
 enum class MixedRoomStep { NotInUse, InUse, RoomDark };
-// s in use for the room's 2.0 stations alone with no 2.0 light from any device: they're off or asleep,
-// and the headset, held in LH2 mode, would see nothing. Stations SteamVR woke showed their first light
-// 35-42 s after it started, and up to 23 s after this came into use.
-constexpr double kLh2RoomDark = 60;
+// s in use for the room's 2.0 stations alone with no 2.0 light from any device: they're off or asleep, and
+// devices stop looking for their light (MixedLightView::lh2Unseen). Stations SteamVR woke showed their first
+// light 35-65 s after it started.
+constexpr double kLh2RoomDark = 90;
 // RoomDark: not in use for that room from now on (until the switch is turned on again).
 MixedRoomStep ChooseMixedRoom(const MixedRoomView& view);
 

@@ -324,6 +324,7 @@ class SessionImpl final : public Session, public InputSinkBase {
   double mixedSince_ = 0;     // when mixedActive_ last changed
   double lastLh2Light_ = -1e300;  // the latest beam word from any device
   std::string darkRoom_;      // a room whose 2.0 stations were found off (UpdateMixedRoom)
+  bool lh2Seen_ = false;      // a 2.0 station seen this session (UpdateMixedRoom)
   double lastScout_ = -1e300;
   std::deque<SessionEvent> events_;
   mutable double now_ = 0;  // latest host time seen (live: steady clock)
@@ -820,6 +821,7 @@ void SessionImpl::UpdateMixedLight(const DeviceId& id, Device& d) {
   view.calm = !out.valid || (out.velocity.norm() < kCalmSpeed && out.angularVelocity.norm() < kCalmTurn);
   view.lh1Pulses = now_ - d.lastPulse < 0.5;
   view.everLh2 = d.everLh2;
+  view.lh2Unseen = !lh2Seen_;
   if (runtime::LooksLh1Only(view)) {
     d.lh1Only = true;
     StartMixedLight(d);
@@ -1495,11 +1497,12 @@ void SessionImpl::UpdateMixedRoom() {
     if (b.seen && !seen) seen = serial;
     if (room && room->bases.count(serial) && !inRoom) inRoom = serial;
   }
-  // The room's 2.0 stations alone can be off or asleep: then it stands down for that room
-  // (runtime::ChooseMixedRoom), and the usual choice puts devices on the 1.0 light.
+  lh2Seen_ = seen != 0;
+  // The room's 2.0 stations alone can be off or asleep: devices only look for their light now and then
+  // (UpdateMixedLight), and with none for a while it stands down for that room (runtime::ChooseMixedRoom).
   runtime::MixedRoomView view;
   view.enabled = mixed_.enabled;
-  view.lh2Seen = seen != 0;
+  view.lh2Seen = lh2Seen_;
   view.lh2InRoom = inRoom && room->id != darkRoom_;
   view.inUse = mixedActive_ ? now_ - mixedSince_ : -1;
   view.sinceLh2Light = now_ - lastLh2Light_;

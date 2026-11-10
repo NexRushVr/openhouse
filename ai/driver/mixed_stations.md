@@ -189,13 +189,21 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
   followed). Off, the default, a 1.0-only setup gets the same poses as on master, byte for byte. In a
   2.0-only room it still sorts, with visits and their dropouts, for nothing gained.
 * A room of both kinds with its 2.0 stations off or asleep (without the radio-mode fix SteamVR doesn't
-  wake them on a setup like this one) comes into use, since the room in use has them. The headset is held
-  in LH2 mode there and sees nothing from a 1.0 station, so it can't track, and the controllers spend 30 s
-  of every 45 in LH2 mode, blind. So with no 2.0 light from any device for 60 s after coming into use, and
-  no 2.0 station seen, it stands down for that room (`runtime::ChooseMixedRoom`, a warning in the log): the
-  usual choice then puts every device in LH1 mode on the 1.0 light, as on master. Stations SteamVR woke showed
-  their first light 35-42 s after it started, and up to 23 s after this came into use. 2.0 stations turned
-  on after that aren't seen this session, as on master; turning the switch off and on tries again.
+  wake them on a setup like this one) comes into use, since the room in use has them. Waiting there in LH2
+  mode for stations that may be waking would leave every device blind, the headset most (it stays in LH2
+  mode): live, a minute at the start of a 1.0-only session, and again on switching on. So until a 2.0
+  station is seen, every device, the headset too, only looks for their light, 3 s in LH2 mode, and goes back
+  to the 1.0 light for 15 s before the next look (`MixedLightView::lh2Unseen`). With no 2.0 light from any
+  device for 90 s after coming into use, it stands down for that room (`runtime::ChooseMixedRoom`, a warning
+  in the log), and the usual choice keeps every device on the 1.0 light, as on master. Stations SteamVR woke
+  showed their first light 35-65 s after it started. 2.0 stations turned on after that aren't seen this
+  session, as on master; turning the switch off and on tries again.
+* With the switch on, 2.0 stations turned off mid-session, after one has been seen, leave the headset in
+  LH2 mode with no light, so it doesn't track until they're back or the switch is turned off.
+* A 1.0 station moved or turned since the room was learned, in a room of both kinds: with the 2.0 stations
+  lit their light outweighs its, but with only the 1.0 stations lit they disagree and the play space shifts
+  between them. That's the room map's (it keeps a locked base where it was), as on master; resetting the room
+  relearns it.
 * The first time, a room needs a 2.0 station seen, or in the room openhouse has, before this is in use. If
   the room in use was learned without them, devices beside a lit 1.0 station stay in LH1 mode and never see
   the 2.0 stations, as on master. Turning the 1.0 station off once lets them be seen; after that the room
