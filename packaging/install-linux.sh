@@ -18,6 +18,7 @@ cp -a "$here/lh-libs/." "$dir/lh-libs/"
 rm -f "$target.new"
 cp "$here/driver_lighthouse.so" "$target.new" && mv -f "$target.new" "$target"
 install_schema  # the openhouse page in SteamVR's settings
+install_defaults
 # The update check: warns in SteamVR's next session if an update replaced this driver.
 mkdir -p "$check_dir"
 cp "$here/tools/openhouse-check" "$check_dir/openhouse-check"

@@ -120,7 +120,7 @@ Settings are in `~/.config/lh/` on Linux and `%APPDATA%\lh\` on Windows.
 }
 ```
 `roles` changes a device's role (`left_hand`, `right_hand` or `generic_tracker`, for example a Vive controller on your hip as a tracker), `controllers` picks which controller is left and right, and `disabledDevices` makes openhouse ignore a device completely.
-`mixedLight` (experimental, off by default) uses HTC Vive 1.0 and 2.0 base stations together in one room; `"mixedLight": true` is enough to turn it on. Under Monado and WiVRn this is the only switch. Under SteamVR the same options are in the "openhouse: Experimental" section of SteamVR's settings: this file only fills them in the first time, after that the page wins.
+`mixedLight` (experimental, off by default) uses HTC Vive 1.0 and 2.0 base stations together in one room; `"mixedLight": true` is enough to turn it on. Under Monado and WiVRn this is the only switch. Under SteamVR the same options are at the end of openhouse's page in SteamVR's settings: this file only fills them in the first time, after that the page wins.
 - `preinit/` is optional. Device configs in it (`<serial>.json`) are created when openhouse starts and show up as connected but not tracking until you turn them on (after that they connect and disconnect normally), even under Monado, which only takes devices at startup. Save the configs of your connected devices with `lhtool configs ~/.config/lh/preinit` (close SteamVR/Monado first, turn everything on). If a device's own config differs from its file, openhouse uses the device's and updates the file.
 
 ### SteamVR settings
