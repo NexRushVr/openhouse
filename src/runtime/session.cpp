@@ -325,6 +325,7 @@ class SessionImpl final : public Session, public InputSinkBase {
   double lastLh2Light_ = -1e300;  // the latest beam word from any device
   std::string darkRoom_;      // a room whose 2.0 stations were found off (UpdateMixedRoom)
   bool lh2Seen_ = false;      // a 2.0 station seen this session (UpdateMixedRoom)
+  bool lh2Placed_ = false;    // a 2.0 station in the room in use (UpdateMixedRoom)
   double lastScout_ = -1e300;
   std::deque<SessionEvent> events_;
   mutable double now_ = 0;  // latest host time seen (live: steady clock)
@@ -822,6 +823,7 @@ void SessionImpl::UpdateMixedLight(const DeviceId& id, Device& d) {
   view.lh1Pulses = now_ - d.lastPulse < 0.5;
   view.everLh2 = d.everLh2;
   view.lh2Unseen = !lh2Seen_;
+  view.lh2Unplaced = lh2Seen_ && !lh2Placed_;
   if (runtime::LooksLh1Only(view)) {
     d.lh1Only = true;
     StartMixedLight(d);
@@ -837,10 +839,10 @@ void SessionImpl::UpdateMixedLight(const DeviceId& id, Device& d) {
   d.modeSent = now_;
   if (step.mode == d.lightMode) return;
   char detail[192];
-  std::snprintf(detail, sizeof detail, " after %.1f s, dark %.1f, rotors ready %d learning %d unnamed %d, %s, lost %.1f, %s%s",
+  std::snprintf(detail, sizeof detail, " after %.1f s, dark %.1f, rotors ready %d learning %d unnamed %d, %s, lost %.1f, %s%s%s",
                 view.inMode, view.dark, view.readyRotors, view.learningRotors, view.unnamedRotors,
                 view.tracking ? "tracking" : "not tracking", std::min(view.lost, 999.0), view.calm ? "calm" : "moving",
-                scouted ? ", scouted" : "");
+                scouted ? ", scouted" : "", view.lh2Unseen ? ", no 2.0 seen" : view.lh2Unplaced ? ", no 2.0 placed" : "");
   Emit(SessionEventType::Log, id, id + ": light mode " + (step.mode ? "LH2" : "LH1") + " (" + step.why + ")" + (view.mode < 0 ? "" : detail));
   d.lightMode = step.mode;
   d.modeSince = now_;
@@ -1498,6 +1500,7 @@ void SessionImpl::UpdateMixedRoom() {
     if (room && room->bases.count(serial) && !inRoom) inRoom = serial;
   }
   lh2Seen_ = seen != 0;
+  lh2Placed_ = inRoom != 0;
   // The room's 2.0 stations alone can be off or asleep: devices only look for their light now and then
   // (UpdateMixedLight), and with none for a while it stands down for that room (runtime::ChooseMixedRoom).
   runtime::MixedRoomView view;

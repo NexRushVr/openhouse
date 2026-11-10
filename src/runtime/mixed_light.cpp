@@ -65,25 +65,28 @@ bool MixesLight(DeviceRole role, const MixedLightOptions& options) {
 MixedLightStep ChooseMixedLight(const MixedLightView& v, double visitEvery) {
   if (v.mode < 0) return {1, "start in LH2"};
   const bool resend = v.dark >= kResend && v.sinceSent >= kResend;
-  if (v.stayLh2 && !v.lh2Unseen) {
+  const bool noLh2Pose = v.lh2Unseen || v.lh2Unplaced;  // LH2 mode can't give a pose in this room yet
+  if (v.stayLh2 && !noLh2Pose) {
     if (v.mode != 1) return {1, "stays in LH2"};
     return resend ? MixedLightStep{1, "re-send"} : MixedLightStep{};
   }
   if (v.mode == 1) {
     if (v.readyRotors == 0) {
-      if (v.dark >= (v.lh2Unseen ? kLook : kWakeDark)) return {0, "no 2.0 light"};
+      if (v.dark >= (noLh2Pose ? kLook : kWakeDark)) return {0, "no 2.0 light"};
     } else {
-      const bool done = v.learningRotors == 0 && v.unnamedRotors == 0 && v.tracking;
+      // Unplaced, a pose can't come in LH2 mode: waiting for one would only keep the device blind.
+      const bool posed = v.tracking || v.lh2Unplaced;
+      const bool done = v.learningRotors == 0 && v.unnamedRotors == 0 && posed;
       if (done && v.inMode >= kMinVisit) return {0, "rotors ready"};
       if (v.inMode >= kMinVisit && v.dark >= kVisitDark) return {0, "no 2.0 light"};
-      const double naming = v.tracking ? kMaxNaming : kMaxNamingLost;
+      const double naming = posed ? kMaxNaming : kMaxNamingLost;
       if (v.inMode >= (v.unnamedRotors > 0 ? naming : kMaxVisit)) return {0, "visit over"};
     }
     return resend ? MixedLightStep{1, "re-send"} : MixedLightStep{};
   }
   if (v.dark >= kLh1Dark) return {1, "no light"};
   if (v.readyRotors == 0 && v.inMode >= kNoRotorsRetry) return {1, "no rotors yet"};
-  if (v.lost >= kLostBeforeHelp && v.inMode >= kMinLh1) return {1, "lost"};
+  if (v.lost >= kLostBeforeHelp && v.inMode >= kMinLh1 && !noLh2Pose) return {1, "lost"};
   if (visitEvery > 0 && v.inMode >= visitEvery && (v.calm || v.inMode >= visitEvery * kOverdueFactor)) return {1, "visit"};
   return {};
 }

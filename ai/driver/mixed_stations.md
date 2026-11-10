@@ -208,3 +208,11 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
   the room in use was learned without them, devices beside a lit 1.0 station stay in LH1 mode and never see
   the 2.0 stations, as on master. Turning the 1.0 station off once lets them be seen; after that the room
   has both.
+* Once one is seen there, it's in use, but no 2.0 station is in the room yet, so LH2 mode gives no pose (a
+  device bootstraps on one and stays "acquiring"). Until one is placed, every device, the headset too, visits
+  LH2 mode only to learn the rotors and stays on the 1.0 light, even when lost there
+  (`MixedLightView::lh2Unplaced`): its sorted hits then place the 2.0 stations from the 1.0 ones. Replayed
+  against a room of the two 1.0 stations alone, a controller on the 1.0 light placed the first 2.0 station
+  0.5 s after it was seen, the next 7 s later. Live, before this, every device cycled 8 s blind in LH2
+  mode and 3 s in LH1 mode, too short to pick up the 1.0 light, the headset stayed in LH2 mode, and tracking
+  never came back.
