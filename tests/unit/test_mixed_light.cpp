@@ -284,3 +284,35 @@ TEST(MixedLight, TellsA1Point0OnlyDeviceApart) {
   v.stayLh2 = true;  // a headset
   EXPECT_TRUE(LooksLh1Only(v));
 }
+
+// In use only where there's a 2.0 station to sort, and not for a room whose 2.0 stations stay dark
+// (switched off, or not woken): there the headset, held in LH2 mode, would see nothing.
+TEST(MixedLight, InUseOnlyWithA2Point0StationToSort) {
+  using lh::runtime::ChooseMixedRoom;
+  using lh::runtime::MixedRoomStep;
+  using lh::runtime::MixedRoomView;
+  MixedRoomView v;
+  v.enabled = true;
+  EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::NotInUse) << "no 2.0 station known: a 1.0-only room";
+  v.lh2InRoom = true;
+  EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse);
+  v.enabled = false;
+  EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::NotInUse) << "switched off";
+  v.enabled = true;
+
+  v.inUse = 59;
+  EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse) << "the stations may still be waking";
+  v.inUse = 60;
+  EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::RoomDark);
+  v.sinceLh2Light = 10;
+  EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse) << "a device had 2.0 light lately";
+  v.inUse = 30;
+  v.sinceLh2Light = 1e300;
+  EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse) << "counted from when it came into use";
+
+  v.inUse = 600;
+  v.lh2Seen = true;
+  EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse) << "a 2.0 station seen this session: it's lit";
+  v.lh2InRoom = false;
+  EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse);
+}
