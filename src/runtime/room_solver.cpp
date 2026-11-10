@@ -485,9 +485,11 @@ RoomSolveOutput SolveRoom(const RoomSolveInput& in) {
   }
   std::map<uint32_t, std::pair<int, int>> seenRejected;
   std::map<uint32_t, std::map<std::string, int>> rejectedBy;  // base -> device -> rejected keyframes
+  std::map<uint32_t, std::set<std::string>> seenBy;           // base -> devices with a keyframe of it
   for (size_t i = 0; i < kfs.size(); ++i) {
     if (excluded[i]) continue;
     for (const auto& [base, s] : kfs[i].k->samples) {
+      seenBy[base].insert(kfs[i].k->device);
       ++seenRejected[base].first;
       if (!use[i]) { ++seenRejected[base].second; ++rejectedBy[base][kfs[i].k->device]; }
     }
@@ -556,6 +558,7 @@ RoomSolveOutput SolveRoom(const RoomSolveInput& in) {
     sb.seen = seenRejected[base].first;
     sb.rejected = seenRejected[base].second;
     for (const auto& [device, n] : rejectedBy[base]) sb.rejectingDevices += n >= 5;
+    sb.seeingDevices = int(seenBy[base].size());
     if (const auto known = in.known.find(base); known != in.known.end() && base != in.origin && in.calibration.count(base) && bases.count(base))
       deviceSupport(base, known->second, &sb.checkedDevices, &sb.supportingDevices);
     sb.fresh = fresh[base];

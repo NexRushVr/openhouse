@@ -192,6 +192,14 @@ On session-ms-01 the room settles about 27 s in, from the stored room as from no
 the solver still moves the second base about 3 cm over 20 s (a second epoch at 45 s):
 the room solver is the next thing to steady.
 
+## 1.0 and 2.0 stations together (`PulseSorter`, `runtime/mixed_light.hpp`)
+
+Off by default, a SteamVR switch: devices in LH1 mode, where they see both kinds, with each 2.0
+station's hits picked out of the LH1 pulses and sent down the LH2 path, the pose helping to decide;
+visits to LH2 mode to time the rotors again; light in LH1 mode weighted by how much it scatters
+(`LighthouseDirect::SetMixedLightScatter`, the only change to what the filter does, 0 unless in use). Off,
+replays are byte for byte as before. `mixed_stations.md` has the design and the numbers.
+
 ## A/B switches (environment)
 
 `LH_STOCK_FILTER` turns off all of the above except the room. The individual switches
@@ -339,3 +347,36 @@ fastmotion5 5 -> 0 (coasting ~5 -> 0.6 %); fastmotionindex in the room: no losse
 > 5 cm in 32 s; fresh-room jumps > 5 cm: fastmotionindex 92 -> 28, spin-01 258 -> 57;
 vrchat-01 > 5 cm 5 -> 3; ms4-01 and the LH2 sessions unchanged. Cost: testswing valid
 37 -> 29 % (drops out instead of tracking a wrong pose; fewer jumps).
+
+## Pose solver: non-finite LH2 trial costs cannot steer the line search (2026-11-10)
+
+The bootstrap solver's golden-section line search compared trial costs directly. An
+LH2 sensor outside the plane model's angular domain produces NaN. With `fb` NaN and
+`fa` finite, both `fa <= fb` and `fa < fb` are false, so the search moved toward the
+invalid side; subsequent trials stayed NaN and the pose was lost (issue #47, finding 3).
+
+* **Fix**: `detail::LineSearchCostOrPenalty` leaves finite costs unchanged and maps any
+  non-finite result to the same ordered, finite penalty already used for a pose behind
+  the base. The shorter valid step is therefore preferred instead of walking into NaN.
+* **Verification**: `PoseSolver.NonFiniteLineSearchCostBecomesAnOrderedBehindPenalty`
+  covers finite, NaN and infinity inputs and checks that the penalty increases with the
+  trial distance. Restoring the old `return cost` behaviour makes the test fail with
+  NaN comparisons; restoring the fix passes it. Full `lh_unit_tests`: 30 passed, 1
+  skipped (the pre-existing Linux `/dev/full` test). This pins the cost rule; it does
+  not claim a measured acquisition-rate improvement on hardware.
+
+## Output: losing a track also drops its held pose (2026-11-10)
+
+A still controller or tracker can hold its output pose. `UpdateOutput` returned early
+when `RawOutput` was invalid but left `heldPose_` intact. If the device was moved while
+lost and then reacquired on a base the room had not located yet, the first valid output
+could reuse the old resting place until the device moved again (issue #47, finding 4).
+
+* **Fix**: clear `heldPose_` on the invalid-output path, alongside the other smoothing
+  state. The deliberate primary-switch grace period still holds its coasting pose; only
+  an actually invalid raw output clears the held track.
+* **Verification**: `DeviceTrackerOutput.InvalidTrackingClearsAHeldPose` injects a held
+  pose through the existing runtime test access, runs the real invalid-output path and
+  requires the hold to be gone. Commenting out the reset makes the test fail with the
+  old held pose still present; the restored fix passes it. Full runtime suite: 25/25
+  passed. Full unit suite: 30 passed, 1 skipped. No live hardware improvement is claimed.

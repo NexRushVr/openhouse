@@ -320,4 +320,42 @@ bool WirelessReportParser::Parse(double hostTime, const uint8_t* data, size_t le
   return true;
 }
 
+bool ButtonsReportParser::Parse(double, const uint8_t* data, size_t len) {
+  if (len < 3 || data[0] != 0x01) return false;
+  const uint16_t type = uint16_t(data[1] | (data[2] << 8));
+  const double time = double(dev_->ticks.Last()) * kTick;  // no stamp of its own
+  if (type == 0x0400) {
+    if (len > 14) sink_->OnBattery(dev_->id, {time, data[14]});
+    return true;
+  }
+  // Index controllers report their state in type 0x0700 (~23 Hz), with the radio's 0xa1 record
+  // at [20]: trigger byte [12], int16 axes [16]/[18], then touch bits, fingers, grip and pad
+  // force, as on the radio (read on hardware: LHR-13DA81D1). Wands and trackers send 0x0700 as
+  // a bare counter, without the record: not input.
+  const bool index = type == 0x0700 && len >= 28 && data[20] == 0xa1;
+  if (!index && (type != 0x0100 || len < 0x1c)) return type == 0x0700 || type == 0x0800 || type == 0x0b04;
+  const uint32_t wired = uint32_t(data[8]) | uint32_t(data[9]) << 8 | uint32_t(data[10]) << 16 | uint32_t(data[11]) << 24;
+  auto bit = [&](int i) { return (wired >> i) & 1u; };
+  InputReport in;
+  in.time = time;
+  in.hasButtons = in.hasTrigger = in.hasAxes = true;
+  // Wired bit -> radio bit, the same for both: wand trigger/pad touch/pad click/system/grip/menu,
+  // Index trigger/pad touch/stick click/system/A/B.
+  in.buttons = uint8_t(bit(0) << 0 | bit(20) << 1 | bit(18) << 2 | bit(13) << 3 | bit(2) << 4 | bit(12) << 5);
+  if (index) {
+    in.trigger = data[12];
+    in.axisX = int16_t(data[16] | (data[17] << 8));
+    in.axisY = int16_t(data[18] | (data[19] << 8));
+    in.hasExtended = true;
+    for (size_t i = 0; i < 8; ++i) in.extended[i] = data[20 + i];
+  } else {
+    const unsigned trigger = unsigned(data[0x1a] | (data[0x1b] << 8)) >> 7;  // 15-bit full scale -> 8 bits
+    in.trigger = uint8_t(std::max(trigger > 255 ? 255u : trigger, bit(0) ? 255u : 0u));
+    in.axisX = int16_t(data[0x14] | (data[0x15] << 8));
+    in.axisY = int16_t(data[0x16] | (data[0x17] << 8));
+  }
+  sink_->OnInput(dev_->id, in);
+  return true;
+}
+
 }  // namespace lh::usb

@@ -53,9 +53,17 @@ check_registration() {
 import json, os, sys
 mode, config, manifest, key = sys.argv[1:]
 path = os.path.join(config, 'appconfig.json')
+# Steam's list of every registered VR app: one that can't be read is left alone (#44),
+# rewriting it from {} dropped all the others.
 try:
     with open(path) as f: data = json.load(f)
-except (FileNotFoundError, ValueError): data = {}
+except FileNotFoundError: data = {}
+except (OSError, ValueError):
+    print(f"cannot read {path}; leaving it as it is (SteamVR update warning not {mode}ed)", file=sys.stderr)
+    sys.exit(0)
+if not isinstance(data, dict):
+    print(f"{path} isn't what Steam writes; leaving it as it is", file=sys.stderr)
+    sys.exit(0)
 paths = [p for p in data.get('manifest_paths') or [] if os.path.normpath(p) != os.path.normpath(manifest)]
 if mode == 'register': paths.append(manifest)
 data['manifest_paths'] = paths
@@ -119,6 +127,25 @@ install_schema() {
   mkdir -p "$(dirname "$schema")"
   if [[ -f "$schema" ]] && ! grep -q driver_openhouse "$schema"; then cp -p "$schema" "$schema.stock"; fi
   cp "$here/settingsschema.vrsettings" "$schema"
+}
+# Its defaults, for SteamVR's "reset to default": one line added to SteamVR's own
+# default.vrsettings after its opening brace, removed again on uninstall.
+defaults="$(dirname "$schema")/default.vrsettings"
+defaults_line='"driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "record": false, "resetRoom": false, "baseStationPower": true, "baseStationPowerOff": "none", "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true },'
+install_defaults() {
+  [[ -f "$defaults" ]] || return 0
+  grep -q '"driver_openhouse"' "$defaults" && return 0
+  local tmp="$defaults.openhouse-tmp"
+  # Its own line after the brace's, with the same ending (SteamVR's file has CRLF).
+  awk -v line="$defaults_line" '{ print } !done && /\{/ { cr = sub(/\r$/, "") ? "\r" : ""; print line cr; done = 1 }' "$defaults" > "$tmp" && cat "$tmp" > "$defaults"
+  rm -f "$tmp"
+}
+remove_defaults() {
+  [[ -f "$defaults" ]] || return 0
+  local tmp="$defaults.openhouse-tmp"
+  awk -v line="$defaults_line" '{ l = $0; sub(/\r$/, "", l) } l != line { print }' "$defaults" > "$tmp" && cat "$tmp" > "$defaults"
+  rm -f "$tmp"
+  return 0
 }
 remove_schema() {
   [[ -f "$schema" ]] && grep -q driver_openhouse "$schema" && rm -f "$schema"

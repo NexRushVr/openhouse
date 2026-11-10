@@ -3,12 +3,14 @@
 ## Why
 
 SteamVR powers 2.0 base stations from vrmonitor, through a headset's own Bluetooth radio
-(Index, Vive Pro): it switches the headset's nRF radio between the controller protocol
-and BLE through driver debug requests to the lighthouse driver. With any other headset
-(Quest through Virtual Desktop / ALVR / Steam Link, Bigscreen Beyond, ...) vrmonitor finds
+(Index, Vive Pro, Bigscreen Beyond): it switches the headset's nRF radio between the
+controller protocol and BLE through driver debug requests to the lighthouse driver. With
+any other headset (Quest through Virtual Desktop / ALVR / Steam Link, ...) vrmonitor finds
 no radio and does nothing, so the bases spin until they're unplugged, even though
-SteamVR's power list holds every base. Under openhouse the headset path would also
-depend on our `DebugRequest` (a stub), which wasn't tested.
+SteamVR's power list holds every base. Under openhouse the headset path works too: the
+driver answers vrmonitor's radio mode requests for the headset's built-in receiver
+(`driver/openvr_driver.md`, `usb/radio_mode.hpp`; from upstream, checked there on a
+Bigscreen Beyond).
 
 So openhouse does it itself, through the PC's Bluetooth: wake the room's 2.0 bases when
 the driver starts and, when the user asks for it, sleep (or standby) them when SteamVR
@@ -119,5 +121,7 @@ a MinGW build.
   id); not covered.
 * Idle: standby or sleep the bases while no tracked device is on (SteamVR has an
   inactivity timeout for this).
-* With an Index headset, does SteamVR's own radio path still work under openhouse? It
-  needs the lighthouse driver to answer its radio-mode debug requests.
+* With a headset that has the radio (Index, Vive Pro, Beyond), SteamVR's own path and this
+  one both act on the same bases. Two wakes are harmless; whether both connecting at once
+  makes either side retry or fail wasn't tried (no such headset here). `baseStationPower`
+  off, or `LH_NO_BASESTATION_POWER=1`, leaves it to SteamVR.

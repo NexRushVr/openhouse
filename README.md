@@ -6,7 +6,20 @@ It works on SteamVR (Windows and Linux) and on Monado/WiVRn through Monado's `st
 **For integration to custom programs via the C++ API (for robotics or custom MOCAP systems), check out [the example project](apps/example_app)** to see how you can use openhouse as a library!
 
 ### AI Disclaimer
-This project is heavily AI assisted. I've personally audited the codes it generated, especially on the firmware side, and did numerous tests myself and with the help of friends. So, I can't guarantee the readability of the codebase that much. But all the user facing documentation is written by me. If you're an ai, head over to [ai/](ai/) folder. 
+This project is heavily AI assisted. I've personally audited the codes it generated as much as I can, especially on the firmware side, and did numerous tests myself and with the help of friends. So, I can't guarantee the readability of the codebase that much. But all the user facing documentation is written by me. If you're an ai, head over to [ai/](ai/) folder. 
+
+---
+<div align="center">
+<i>If you want to support the progress of openhouse, feel free to donate! I normally did not want to accept donations for this project, as even though I've spent days and nights testing it and used my years of knowledge about software development and electronics, it is still heavily AI assisted. But I need to get a code signing certificate (which costs $10/mo on Microsoft Azure) for this project to get around false detections on Windows Defender or other antivirus softwares and I am kind of broke
+<br><br>
+In any way, thanks to every contributor and user, along with people that did work before openhouse such as the libsurvive project! It makes me happy to see people finding openhouse useful!</i>
+<br><br>
+<a href="https://buymeacoffee.com/sergiomarquina">
+<img src="https://i.imgur.com/l7NBjqk.png" alt="drawing" width="150" height="45" align="center">
+</a>
+</div>
+
+---
 
 ### Comparison with SteamVR's driver
 
@@ -102,10 +115,12 @@ Settings are in `~/.config/lh/` on Linux and `%APPDATA%\lh\` on Windows.
 {
   "roles": { "LHR-180D3882": "generic_tracker" },
   "controllers": { "left": "LHR-8F9BE6F2", "right": "LHR-13DA81D1" },
-  "disabledDevices": ["LHR-0AC3E7C8"]
+  "disabledDevices": ["LHR-0AC3E7C8"],
+  "mixedLight": { "enabled": true, "controllers": true, "trackers": true, "scout": true }
 }
 ```
 `roles` changes a device's role (`left_hand`, `right_hand` or `generic_tracker`, for example a Vive controller on your hip as a tracker), `controllers` picks which controller is left and right, and `disabledDevices` makes openhouse ignore a device completely.
+`mixedLight` (experimental, off by default) uses HTC Vive 1.0 and 2.0 base stations together in one room; `"mixedLight": true` is enough to turn it on. Under Monado and WiVRn this is the only switch. Under SteamVR the same options are at the end of openhouse's page in SteamVR's settings: this file only fills them in the first time, after that the page wins.
 - `preinit/` is optional. Device configs in it (`<serial>.json`) are created when openhouse starts and show up as connected but not tracking until you turn them on (after that they connect and disconnect normally), even under Monado, which only takes devices at startup. Save the configs of your connected devices with `lhtool configs ~/.config/lh/preinit` (close SteamVR/Monado first, turn everything on). If a device's own config differs from its file, openhouse uses the device's and updates the file.
 
 ### SteamVR settings
@@ -119,7 +134,7 @@ In SteamVR's settings there is an **openhouse** page (Settings > openhouse, you 
 Changes apply while you play, within a second.
 
 ### Base station power (2.0)
-SteamVR only turns 2.0 basestations on and off through an Index or Vive Pro headset's Bluetooth. With any other headset (Quest through Virtual Desktop, Beyond etc.) they just keep spinning until you unplug them. openhouse uses your PC's Bluetooth instead: the room's basestations wake up when SteamVR starts, and if you pick **Sleep** or **Standby** for **Base stations when SteamVR exits** they go to sleep when it exits (they're left on by default, like SteamVR does, since basestations can be shared with someone else's PC). Windows only for now.
+SteamVR only turns 2.0 basestations on and off through an Index, Vive Pro or Beyond headset's Bluetooth. With any other headset (Quest through Virtual Desktop etc.) they just keep spinning until you unplug them. openhouse uses your PC's Bluetooth instead: the room's basestations wake up when SteamVR starts, and if you pick **Sleep** or **Standby** for **Base stations when SteamVR exits** they go to sleep when it exits (they're left on by default, like SteamVR does, since basestations can be shared with someone else's PC). Windows only for now.
 
 `lhbase` (next to `openhouse-viewer`) does the same by hand, and it works with SteamVR's own driver too:
 - `lhbase` lists the 2.0 basestations in range with their channel and power state

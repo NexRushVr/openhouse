@@ -92,6 +92,7 @@ add_library(lh_tracking
   src/tracking/tracked_object.cpp
   src/tracking/pose_solver.cpp
   src/tracking/tracking_source.cpp
+  src/tracking/pulse_sorter.cpp
   src/tracking/sample_history.cpp
   src/tracking/lighthouse_direct.cpp
   src/tracking/tracker.cpp
@@ -192,6 +193,7 @@ endif()
 
 # ---- liblh: the session runtime (shared room map, devices, input) -------------
 add_library(lh_runtime OBJECT
+  src/runtime/mixed_light.cpp
   src/runtime/room_map.cpp
   src/runtime/index_input.cpp
   src/runtime/device_tracker.cpp
@@ -233,9 +235,11 @@ endif()
 option(LH_BUILD_OPENVR_DRIVER "Build the drop-in driver_lighthouse.so" ON)
 find_path(OPENVR_INCLUDE_DIR openvr_driver.h PATH_SUFFIXES openvr)
 if(LH_BUILD_OPENVR_DRIVER AND LH_BUILD_USB AND OPENVR_INCLUDE_DIR)
-  add_library(driver_lighthouse MODULE src/openvr/driver_lighthouse.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/stock_hmd.cpp src/openvr/pairing_mailbox.cpp src/openvr/telemetry_server.cpp src/openvr/basestation_power.cpp $<TARGET_OBJECTS:lh_runtime>)
+  add_library(driver_lighthouse MODULE src/openvr/driver_lighthouse.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/stock_hmd.cpp src/openvr/pairing_mailbox.cpp src/openvr/telemetry_server.cpp src/openvr/basestation_power.cpp src/openvr/watchdog.cpp $<TARGET_OBJECTS:lh_runtime>)
   if(WIN32)
     target_link_libraries(driver_lighthouse PRIVATE setupapi hid)  # stock_hmd: hiding devices from the stock DLL
+    # HmdDriverFactory and our hidapi, for drivers that hook HID access (the .def says why).
+    target_sources(driver_lighthouse PRIVATE src/openvr/driver_lighthouse.def)
     set(LH_OPENVR_PLATFORM win64)
   elseif(APPLE)
     set(LH_OPENVR_PLATFORM osx)
@@ -270,8 +274,26 @@ install(TARGETS lh EXPORT lighthouseTargets LIBRARY DESTINATION ${CMAKE_INSTALL_
 # ---- lhviz: 3D visualizer on top of liblh ---------------------------------------
 if(LH_BUILD_VIEWER)
   find_package(glfw3 QUIET)
+  # Some distributions ship GLFW without its CMake package (only glfw3.pc): find it there.
+  if(NOT TARGET glfw)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(LH_GLFW QUIET IMPORTED_TARGET glfw3)
+      if(LH_GLFW_FOUND)
+        add_library(glfw INTERFACE IMPORTED)
+        target_link_libraries(glfw INTERFACE PkgConfig::LH_GLFW)
+      endif()
+    endif()
+  endif()
   find_package(OpenGL QUIET)
-  if(TARGET glfw AND OpenGL_FOUND)
+  if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui.cpp)
+    set(LH_VIEWER_MISSING "Dear ImGui (third_party/imgui is missing from the source tree)")
+  elseif(NOT TARGET glfw)
+    set(LH_VIEWER_MISSING "GLFW 3 (install its development package, e.g. glfw-devel / libglfw3-dev / glfw)")
+  elseif(NOT OpenGL_FOUND)
+    set(LH_VIEWER_MISSING "OpenGL (install its development package, e.g. mesa-libGL-devel / libgl-dev)")
+  endif()
+  if(NOT LH_VIEWER_MISSING)
     add_library(lh_imgui STATIC
       third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
       third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_glfw.cpp
@@ -296,7 +318,8 @@ if(LH_BUILD_VIEWER)
       install(TARGETS openhouse-compare RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     endif()
   else()
-    message(STATUS "GLFW/OpenGL not found: skipping lhviz")
+    message(WARNING "LH_BUILD_VIEWER is on, but ${LH_VIEWER_MISSING} wasn't found: lhviz, openhouse-viewer "
+                    "and openhouse-compare are not built. Install it, or configure with -DLH_BUILD_VIEWER=OFF.")
   endif()
 endif()
 
@@ -309,8 +332,12 @@ if(LH_BUILD_TESTS)
     tests/unit/test_tracking_source.cpp
     tests/unit/test_pose_solver.cpp
     tests/unit/test_tracker.cpp
+    tests/unit/test_direct_filter.cpp
     tests/unit/test_disambiguator_sob.cpp
-    tests/unit/test_basestation.cpp)
+    tests/unit/test_pulse_sorter.cpp
+    tests/unit/test_mixed_light.cpp
+    tests/unit/test_basestation.cpp
+    src/runtime/mixed_light.cpp)
   target_include_directories(lh_unit_tests PRIVATE src)
   target_link_libraries(lh_unit_tests PRIVATE lh_tracking lh_basestation GTest::gtest_main)
   if(WIN32)
@@ -318,7 +345,7 @@ if(LH_BUILD_TESTS)
   endif()
   if(LH_BUILD_USB)
     target_sources(lh_unit_tests PRIVATE tests/unit/test_report_parser.cpp tests/unit/test_device_config.cpp
-      tests/unit/test_raw_capture.cpp)
+      tests/unit/test_raw_capture.cpp tests/unit/test_radio_mode.cpp)
     target_link_libraries(lh_unit_tests PRIVATE lh_usb)
     add_executable(lh_replay_tests tests/integration/test_replay.cpp)
     target_compile_definitions(lh_replay_tests PRIVATE LH_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -363,7 +390,8 @@ if(LH_BUILD_TESTS)
     set_tests_properties(capture_no_overwrite PROPERTIES WILL_FAIL TRUE)
   endif()
 
-  if(LH_BUILD_ORACLE_TESTS AND NOT WIN32 AND NOT APPLE)
+  # Only with the stock driver they dlopen (git-ignored): a fresh clone aborted ctest (#55).
+  if(LH_BUILD_ORACLE_TESTS AND NOT WIN32 AND NOT APPLE AND EXISTS "${CMAKE_SOURCE_DIR}/driver_lighthouse.so")
     add_executable(lh_oracle_tests
       tests/oracle/oracle.cpp
       tests/oracle/test_lighthouse_model.cpp

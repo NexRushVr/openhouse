@@ -96,7 +96,7 @@ void SobDisambiguator::OnBeamWord(double t, int channel, int ootxBit, int genera
   if (revs > 1) std::erase_if(c.hits, [&](const Hit& h) { return h.time < c.sync; });
 }
 
-void SobDisambiguator::OnSensorWord(double t, int channel, int sensor) {
+void SobDisambiguator::OnSensorWord(double t, int channel, int sensor, bool sorted) {
   if (channel < 0 || channel >= kChannels || sensor < 0 || sensor >= 32) return;
   latest_ = std::max(latest_, t);
   Channel& c = channels_[size_t(channel)];
@@ -112,7 +112,7 @@ void SobDisambiguator::OnSensorWord(double t, int channel, int sensor) {
     Skip(c, k);
     std::erase_if(c.hits, [&](const Hit& h) { return h.time < c.sync; });  // unseen revolutions
   }
-  c.hits.push_back({t, sensor});
+  c.hits.push_back({t, sensor, sorted});
 }
 
 void SobDisambiguator::Advance(double t) {
@@ -133,7 +133,9 @@ void SobDisambiguator::Advance(double t) {
 void SobDisambiguator::Skip(Channel& c, long revolutions) {
   if (revolutions <= 0) return;
   c.framer.Reset();  // the fast path needs an unbroken frame
-  for (long i = 0; i < std::min<long>(revolutions, 443); ++i) { c.ring.Push(0xff); ++c.ringPushes; }
+  // The ring is one 443-slot lap: only the remainder moves it. Capping at 443 left it
+  // n % 443 slots out of step after a longer gap (#48.3).
+  for (long i = 0; i < revolutions % 443; ++i) { c.ring.Push(0xff); ++c.ringPushes; }
 }
 
 void SobDisambiguator::PushOotx(Channel& c, int channel, int bit) {
@@ -183,6 +185,7 @@ void SobDisambiguator::Emit(Channel& c, int channel, double next, bool nextReal)
     s.width = kHitWidth;
     s.angle = (h.time - c.sync) * kTwoPi / span;
     s.axis = s.angle >= kTwoPi / 2 ? 1 : 0;  // first half turn: plane 0
+    if (h.sorted) s.flags2 |= kSampleSorted;
     f[s.axis].samples.push_back(s);
   }
   for (auto& frame : f) {
@@ -204,6 +207,14 @@ bool SobDisambiguator::PopFrame(OpticalFrame* out) {
   frames_.pop_front();
   return true;
 }
+
+bool SobDisambiguator::OldestFrameTime(double* t) const {
+  if (frames_.empty()) return false;
+  *t = FirstHit(frames_.front());
+  return true;
+}
+
+double SobDisambiguator::SettledUpTo() const { return latest_ - kHold; }
 
 bool SobDisambiguator::PopBaseConfig(BaseConfig* cfg, BaseDynamicState* dyn) {
   if (configs_.empty()) return false;

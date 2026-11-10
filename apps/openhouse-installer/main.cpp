@@ -68,6 +68,9 @@ fs::path EnvPath(const wchar_t* name) {
 
 std::string ReadFile(const fs::path& p) {
   std::ifstream in(p, std::ios::binary);
+  // An unreadable driver read as "" looked like SteamVR's own, and uninstall deleted the
+  // stock backup (#44): stop instead.
+  if (!in) throw Failure("Could not read " + Show(p) + " (is SteamVR still running?)");
   return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
@@ -188,14 +191,34 @@ void CloseHosts() {
 // ---- the update check's registration ----
 
 struct Paths {
-  fs::path here, steamvr, directory, target, backup, schema, checkDir, checkManifest;
+  fs::path here, steamvr, directory, target, backup, schema, defaults, checkDir, checkManifest;
 };
 
 void SetCheckRegistration(const Paths& p, bool registerIt) {
   const fs::path config = SteamConfig(p.steamvr);
   const fs::path appconfig = config / "appconfig.json";
-  ordered_json data = ReadJson(appconfig);
-  if (!data.is_object()) data = ordered_json::object();
+  ordered_json data = ordered_json::object();
+  {
+    // Steam's list of every registered VR app: one we can't read or parse is left alone.
+    // Rewriting it from an empty object dropped all the others (#44).
+    std::error_code ec;
+    if (fs::exists(appconfig, ec)) {
+      std::ifstream in(appconfig, std::ios::binary);
+      const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      try {
+        if (!in && !in.eof()) throw std::runtime_error("unreadable");
+        if (!text.empty()) data = ordered_json::parse(text);
+      } catch (const std::exception&) {
+        std::cout << "Could not read " << Show(appconfig) << "; leaving it as it is (the update check isn't "
+                  << (registerIt ? "registered" : "unregistered") << ").\n";
+        return;
+      }
+      if (!data.is_object()) {
+        std::cout << Show(appconfig) << " isn't what Steam writes; leaving it as it is.\n";
+        return;
+      }
+    }
+  }
   ordered_json kept = ordered_json::array();
   const std::string manifest = Show(p.checkManifest);
   if (data.contains("manifest_paths") && data["manifest_paths"].is_array())
@@ -212,7 +235,10 @@ void SetCheckRegistration(const Paths& p, bool registerIt) {
 
 // ---- the settings page schema ----
 
-bool HasOurSection(const fs::path& schema) { return ReadFile(schema).find("driver_openhouse") != std::string::npos; }
+bool HasOurSection(const fs::path& schema) {
+  std::error_code ec;
+  return fs::exists(schema, ec) && ReadFile(schema).find("driver_openhouse") != std::string::npos;
+}
 
 void InstallSchema(const Paths& p) {
   const fs::path source = p.here / "settingsschema.vrsettings";
@@ -232,6 +258,35 @@ void RemoveSchema(const Paths& p) {
   }
 }
 
+// ---- the settings page's defaults ----
+// SteamVR's "reset to default" takes values from the driver's default.vrsettings, SteamVR's
+// own file: without our section every toggle reset to off and every number to 0. One line
+// is added after its opening brace and removed again on uninstall; the rest stays SteamVR's.
+constexpr const char* kDefaultsLine =
+    R"("driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "record": false, "resetRoom": false, "baseStationPower": true, "baseStationPowerOff": "none", "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true },)";
+
+void InstallDefaults(const Paths& p) {
+  std::error_code ec;
+  if (!fs::exists(p.defaults, ec)) return;
+  std::string text = ReadFile(p.defaults);
+  if (text.find("\"driver_openhouse\"") != std::string::npos) return;
+  const size_t brace = text.find('{');
+  if (brace == std::string::npos) return;
+  text.insert(brace + 1, std::string("\n") + kDefaultsLine);
+  WriteText(p.defaults, text);
+}
+
+void RemoveDefaults(const Paths& p) {
+  std::error_code ec;
+  if (!fs::exists(p.defaults, ec)) return;
+  std::string text = ReadFile(p.defaults);
+  const std::string line = std::string("\n") + kDefaultsLine;
+  const size_t at = text.find(line);
+  if (at == std::string::npos) return;
+  text.erase(at, line.size());
+  WriteText(p.defaults, text);
+}
+
 // ---- actions ----
 
 void Install(const Paths& p) {
@@ -248,6 +303,7 @@ void Install(const Paths& p) {
   CopyOver(ours, p.target);
   if (ReadFile(p.target) != ReadFile(ours)) throw Failure("The installed driver doesn't match the package's (" + Show(p.target) + ")");
   InstallSchema(p);
+  InstallDefaults(p);
   const fs::path checkExe = p.here / "apps" / "openhouse-check.exe";
   if (fs::exists(checkExe)) {
     fs::create_directories(p.checkDir);
@@ -279,6 +335,7 @@ void Install(const Paths& p) {
 void Uninstall(const Paths& p) {
   // First, so the check goes even when there's no driver backup.
   RemoveSchema(p);
+  RemoveDefaults(p);
   SetCheckRegistration(p, false);
   // Only the files we put there: the folder is also the driver's data directory, with the
   // user's recordings (Record Session) in it.
@@ -331,12 +388,13 @@ int Run(int argc, wchar_t** argv) {
   p.target = p.directory / "driver_lighthouse.dll";
   p.backup = fs::path(p.target) += ".stock";
   p.schema = p.steamvr / "drivers" / "lighthouse" / "resources" / "settings" / "settingsschema.vrsettings";
+  p.defaults = p.schema.parent_path() / "default.vrsettings";
   p.checkDir = EnvPath(L"LOCALAPPDATA") / "openhouse";
   p.checkManifest = p.checkDir / "openhouse-check.vrmanifest";
   if (!fs::exists(p.target)) throw Failure("Driver not found at " + Show(p.target) + ". Run this with --steamvr PATH.");
   if (action == "status") {
     std::cout << "Driver: " << Show(p.target) << "\n"
-              << "openhouse installed: " << (ReadFile(p.target).find(kMarker) != std::string::npos ? "yes" : "no") << "\n"
+              << "openhouse installed: " << (fs::exists(p.target) && ReadFile(p.target).find(kMarker) != std::string::npos ? "yes" : "no") << "\n"
               << "Stock backup present: " << (fs::exists(p.backup) ? "yes" : "no") << "\n";
     return 0;
   }

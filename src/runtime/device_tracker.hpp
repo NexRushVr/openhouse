@@ -67,6 +67,11 @@ class DeviceTracker {
     smoothPosition_ = std::max(0.0, position);
     smoothRotation_ = std::max(0.0, rotation);
   }
+  // LighthouseDirect::SetMixedLightScatter, kept for every filter this tracker starts.
+  void SetMixedLightScatter(double sortedSeconds, double lh1Radians) {
+    mixedScatter_ = {sortedSeconds, lh1Radians};
+    filter_->SetMixedLightScatter(sortedSeconds, lh1Radians);
+  }
   DeviceTracker(std::string id, TrackedObjectModel model, RoomMap* room);
 
   void OnBaseConfig(const BaseConfig&, const BaseDynamicState&);
@@ -109,6 +114,7 @@ class DeviceTracker {
   RoomMap* room_;
   TrackingSource source_;
   std::unique_ptr<LighthouseDirect> filter_;
+  std::pair<double, double> mixedScatter_{0, 0};  // SetMixedLightScatter
   std::map<uint32_t, std::pair<BaseConfig, BaseDynamicState>> bases_;
   std::optional<direct::DirectFilter> carry_;  // calibrated filter from the last track
   // The calibration as of the last calm, well-lit moment (no violent motion, light

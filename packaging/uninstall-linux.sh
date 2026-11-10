@@ -11,6 +11,7 @@ remove_monado_check
 rm -f "$check_dir/openhouse-check" "$check_dir/openhouse-check.vrmanifest" "$check_dir/openhouse-monado-watch"
 rmdir "$check_dir" 2>/dev/null || true  # only goes when nothing else is in it
 remove_schema
+remove_defaults
 if ! grep -qa "liblh session started" "$target"; then
   # A SteamVR update puts its own, newer driver in place of ours. The backup is then the
   # older one: moving it back would undo the update, so it goes instead.

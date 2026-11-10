@@ -33,6 +33,9 @@ struct DeviceTrackerTestAccess {
   static LighthouseDirect& Core(DeviceTracker& d) { return *d.filter_; }
   static direct::DirectFilter& Filter(DeviceTracker& d) { return d.filter_->FilterForTest(); }
   static bool HasCarry(const DeviceTracker& d) { return d.carry_.has_value(); }
+  static void SetHeldPose(DeviceTracker& d, const Eigen::Isometry3d& pose) { d.heldPose_ = pose; }
+  static bool HasHeldPose(const DeviceTracker& d) { return d.heldPose_.has_value(); }
+  static void UpdateOutput(DeviceTracker& d) { d.UpdateOutput(); }
   static void Check(DeviceTracker& d, double now) { d.latestImu_ = now; d.CheckHealth(); }
   static void Acquired(DeviceTracker& d) { d.OnAcquired(); }
 };
@@ -64,6 +67,21 @@ BaseConfig Config(uint32_t serial) {
   c.serial = serial;
   c.cal.assign(14, 0.0);
   return c;
+}
+
+TEST(DeviceTrackerOutput, InvalidTrackingClearsAHeldPose) {
+  RoomMap room;
+  TrackedObjectModel model;
+  DeviceTracker tracker("LHR-HELD", model, &room);
+  DeviceTrackerTestAccess::SetHeldPose(tracker, Pose(1.0, 2.0, 3.0, 0.0));
+  ASSERT_TRUE(DeviceTrackerTestAccess::HasHeldPose(tracker));
+
+  // No bootstrap and no located primary base make RawOutput invalid. The old
+  // loss path returned without clearing heldPose_, allowing a later valid output
+  // to reuse this stale location after the device had been moved while lost.
+  DeviceTrackerTestAccess::UpdateOutput(tracker);
+  EXPECT_FALSE(tracker.Output().valid);
+  EXPECT_FALSE(DeviceTrackerTestAccess::HasHeldPose(tracker));
 }
 
 TEST(DeviceRole, ComesFromDeviceClassOnly) {
@@ -773,12 +791,13 @@ struct MsReplay {
   SessionSnapshot snapshot;
   std::vector<std::pair<double, bool>> valid;  // (t, valid) of one device, 100 Hz
 };
-MsReplay MsRun(const std::string& capture, const std::string& only, double to) {
+MsReplay MsRun(const std::string& capture, const std::string& only, double to, bool mixedLight = false) {
   const auto trace = (std::filesystem::temp_directory_path() / ("lh-test-ms-" + std::to_string(lh::platform::ProcessId()) + ".jsonl")).string();
   SessionOptions options;
   options.replayPath = capture;
   options.replayRealtime = false;
   options.replayTo = to;
+  options.mixedLight.enabled = mixedLight;
   if (!only.empty()) options.replayOnly = {only};
   options.saveRoomMap = false;
   options.roomMapPath = (std::filesystem::temp_directory_path() / ("lh-test-ms-room-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
@@ -829,6 +848,35 @@ TEST(MultiStation, DetectsDecodesAndTracks) {
   int n = 0, ok = 0;
   for (const auto& [t, v] : r.valid) if (t - start > 5) { ++n; ok += v; }
   EXPECT_GT(ok, 0.95 * n) << ok << "/" << n;
+}
+
+// The 1.0 + 2.0 switch on in a room with no 2.0 station (lhbs multi-station, whose SteamVR
+// database has a 2.0 station of another room): never in use, not even before the room is known,
+// so multi-station detection and tracking are as with it off (DetectsDecodesAndTracks).
+TEST(MixedLight, NeverInUseInARoomWithout2Point0Stations) {
+  const std::string capture = TestCapture("ms-a/input.lhraw");
+  if (!std::filesystem::exists(capture)) GTEST_SKIP();
+  const auto r = MsRun(capture, "LHR-13DA81D1", 40, true);
+  EXPECT_FALSE(MsHasEvent(r, "1.0 + 2.0 base stations together: in use"));
+  EXPECT_TRUE(MsHasEvent(r, "multi-station layout detected"));
+  ASSERT_FALSE(r.valid.empty());
+  const double start = r.valid.front().first;
+  int n = 0, ok = 0;
+  for (const auto& [t, v] : r.valid) if (t - start > 5) { ++n; ok += v; }
+  EXPECT_GT(ok, 0.95 * n) << ok << "/" << n;
+}
+
+// In a 2.0 room it's in use, and LH2 light alone (the recording's mode) tracks as before.
+TEST(MixedLight, InUseWith2Point0StationsAndLh2LightStillTracks) {
+  const std::string capture = TestCapture("lh2-one-controller/input.lhraw");
+  if (!std::filesystem::exists(capture)) GTEST_SKIP();
+  const auto r = MsRun(capture, "", 0, true);
+  EXPECT_TRUE(MsHasEvent(r, "1.0 + 2.0 base stations together: in use"));
+  ASSERT_FALSE(r.valid.empty());
+  const double start = r.valid.front().first;
+  int n = 0, ok = 0;
+  for (const auto& [t, v] : r.valid) if (t - start > 10) { ++n; ok += v; }
+  EXPECT_GT(ok, 0.97 * n) << ok << "/" << n;
 }
 
 // A stock 2-station room never switches to the multi-station layout.
@@ -934,3 +982,46 @@ TEST_P(Lh2Regression, TracksEveryDeviceWithoutJumps) {
   }
 }
 INSTANTIATE_TEST_SUITE_P(Bundled, Lh2Regression, ::testing::Values("lh2-one-controller", "lh2-five-devices"));
+
+namespace {
+lh::MixedLightOptions MixedFromSettings(const std::string& text, bool cliOn = false) {
+  const auto path = (std::filesystem::temp_directory_path() /
+                     ("lh-test-mixed-settings-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
+  { std::ofstream(path) << text; }
+  SessionOptions options;
+  options.replayPath = "no-such-capture.lhraw";  // Start reads the settings, then fails to open it
+  options.settingsPath = path;
+  options.mixedLight.enabled = cliOn;
+  auto session = Session::Create(options);
+  std::string error;
+  session->Start(&error);
+  const auto mixed = session->MixedLight();
+  session->Stop();
+  session.reset();
+  std::filesystem::remove(path);
+  return mixed;
+}
+}  // namespace
+
+TEST(MixedLight, SettingsFileTurnsItOnWithItsOptions) {
+  const auto m = MixedFromSettings(R"({"mixedLight": {"enabled": true, "trackers": false, "scout": false}})");
+  EXPECT_TRUE(m.enabled);
+  EXPECT_TRUE(m.controllers);
+  EXPECT_FALSE(m.trackers);
+  EXPECT_FALSE(m.scout);
+}
+
+TEST(MixedLight, SettingsFileAcceptsABool) {
+  EXPECT_TRUE(MixedFromSettings(R"({"mixedLight": true})").enabled);
+  EXPECT_FALSE(MixedFromSettings(R"({"mixedLight": false})").enabled);
+  EXPECT_FALSE(MixedFromSettings(R"({})").enabled);
+}
+
+TEST(MixedLight, ABadValueLeavesItOff) {
+  EXPECT_FALSE(MixedFromSettings(R"({"mixedLight": {"enabled": "yes"}})").enabled);
+  EXPECT_FALSE(MixedFromSettings(R"({"mixedLight": 1})").enabled);
+}
+
+TEST(MixedLight, TheCommandLineWins) {
+  EXPECT_TRUE(MixedFromSettings(R"({"mixedLight": false})", true).enabled);
+}
