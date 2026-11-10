@@ -773,7 +773,7 @@ struct MsReplay {
   SessionSnapshot snapshot;
   std::vector<std::pair<double, bool>> valid;  // (t, valid) of one device, 100 Hz
 };
-MsReplay MsRun(const std::string& capture, const std::string& only, double to) {
+MsReplay MsRun(const std::string& capture, const std::string& only, double to, bool mixedLight = false) {
   const auto trace = (std::filesystem::temp_directory_path() / ("lh-test-ms-" + std::to_string(lh::platform::ProcessId()) + ".jsonl")).string();
   SessionOptions options;
   options.replayPath = capture;
