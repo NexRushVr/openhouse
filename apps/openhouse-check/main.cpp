@@ -14,6 +14,7 @@
 #include <lh/version.hpp>
 
 #include <array>
+#include <chrono>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -185,9 +186,13 @@ void Show() {
     const std::string tool = command.substr(0, command.find(' '));
     if (std::system(("command -v " + tool + " >/dev/null 2>&1").c_str()) != 0) continue;
     Log("showing with " + tool);
+    const auto shownAt = std::chrono::steady_clock::now();
     const int rc = std::system((command + " >/dev/null 2>&1").c_str());
     Log(tool + " exited with " + std::to_string(rc));
-    if (rc == 0) return;
+    // Shown: it exited cleanly, or stayed up a while. zenity exits 1 both when dismissed with
+    // Esc and when it can't open a display; only the second is quick, and only then does the
+    // next tool get a turn (closing the warning showed it again, #54.4).
+    if (rc == 0 || std::chrono::steady_clock::now() - shownAt > std::chrono::seconds(1)) return;
   }
   std::fprintf(stderr, "%s: %s\n", kTitle, kText);
 #endif

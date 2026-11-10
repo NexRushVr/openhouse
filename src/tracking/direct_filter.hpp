@@ -108,10 +108,8 @@ class DirectFilter {
   double lastWorstSigma = 0;     // last Update: largest |innovation| / predicted sigma
   // Whole frames rejected as throwing the device far (see Update), and the current run.
   static constexpr double kFrameRejectMove = 0.10;  // m
-  static constexpr int kMaxFrameRejectRun = 6;
   uint64_t rejectedFrames = 0;
   bool frameGateOff = false;  // set per update by the caller (see LighthouseDirect)
-  int frameRejectRun = 0;
   double omegaCorrectionLimit2 = 1e300;  // +0x408 (|dω|² limit)
   bool altBaseActive[3] = {false, false, false};  // base slots 1..3 in use (+0x1d0..)
   // Not stock: slots whose base is being relearned (knocked): a correction moving it

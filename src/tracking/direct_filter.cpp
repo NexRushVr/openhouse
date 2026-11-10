@@ -118,11 +118,41 @@ void DirectFilter::Predict(double dtPos, double dtRot) {
   Jet xj[kStateSize], r[kStateSize];
   for (int i = 0; i < kStateSize; i++) xj[i] = Jet(x[i], i);
   StateTimestep(xj, dtPos, dtRot, r);
-  Mat F(n, n);
   for (int i = 0; i < kStateSize; i++) xLin[i] = r[i].a;
-  for (int i = 0; i < n; i++)
-    for (int j = 0; j < n; j++) F(i, j) = r[i].v[j];
-  Ppred = F * P.topLeftCorner(n, n) * F.transpose() + Q.topLeftCorner(n, n);
+  // Ppred = F P F^T + Q. F is the identity except in the rows of the states that move over a
+  // step (position, velocity, orientation: 10 of 31-49, with ~37 entries off the identity), so
+  // only those rows of F P and those columns of (F P) F^T are summed; the others are copies.
+  // The same products as the dense form up to summation order; the dense pair of 49x49 GEMMs
+  // per IMU sample was most of the driver's CPU time (#39, #50).
+  struct Row { int i; int count; int j[kStateSize]; double v[kStateSize]; };
+  Row rows[kStateSize];
+  int moving = 0;
+  for (int i = 0; i < n; i++) {
+    Row& row = rows[moving];
+    row.i = i;
+    row.count = 0;
+    bool identity = true;
+    for (int j = 0; j < n; j++) {
+      const double f = r[i].v[j];
+      if (f != (i == j ? 1.0 : 0.0)) identity = false;
+      if (f != 0.0) { row.j[row.count] = j; row.v[row.count] = f; ++row.count; }
+    }
+    if (!identity) ++moving;
+  }
+  const auto Pn = P.topLeftCorner(n, n);
+  Mat A = Pn;  // F P
+  for (int k = 0; k < moving; k++) {
+    const Row& row = rows[k];
+    A.row(row.i).setZero();
+    for (int t = 0; t < row.count; t++) A.row(row.i).noalias() += row.v[t] * Pn.row(row.j[t]);
+  }
+  Ppred = A;  // (F P) F^T
+  for (int k = 0; k < moving; k++) {
+    const Row& row = rows[k];
+    Ppred.col(row.i).setZero();
+    for (int t = 0; t < row.count; t++) Ppred.col(row.i).noalias() += row.v[t] * A.col(row.j[t]);
+  }
+  Ppred += Q.topLeftCorner(n, n);
 }
 
 bool DirectFilter::RejectCorrection(const Vec& dx) {
@@ -299,7 +329,12 @@ bool DirectFilter::Update(const std::vector<Residual>& res, const Mat& R, const 
   // the wrong track out of the room. No single frame, a few ms after the last, moves a
   // device 10 cm. Gating on sigma instead (> 100) also dropped good light from still
   // devices, whose predicted spread is tiny (vrchat-01: coasting 4.9 -> 10 %).
-  // Never more than a few in a row: if it is the filter that's wrong, the light must win.
+  // No cap on how many in a row: if it is the filter that's wrong, DeviceTracker's refused-
+  // light reset reacquires after 0.5 s of light that fits nothing. (A cap of 6 frames was
+  // written here but never acted: the IMU samples between frames, which share this Update,
+  // reset its count. Making it act, either applying the 7th frame or reacquiring at once,
+  // was worse in the Beat Saber stand-ins - a 52 cm jump in one replay; fastmotion4/5 one
+  // more fly-away and 1 % less tracking - so the behaviour live-tested here is kept, #47.1.)
   // Nor while the filter is still settling (fewer than 200 updates since a bootstrap or
   // reacquire): its large corrections then are the right ones (all 322 frames this gate
   // took from vrchat-01's 100-200 s were there). It acts in violent motion too, where
@@ -309,16 +344,16 @@ bool DirectFilter::Update(const std::vector<Residual>& res, const Mat& R, const 
   // 2026-10-22 (no fly-aways).
   if (gate && !frameGateOff && gateSigma > 0 && updateCount >= 200 && opticalRows > 0 &&
       2 * lastOutliers > opticalRows &&
-      dx.size() >= 3 && dx.head<3>().norm() > kFrameRejectMove && frameRejectRun < kMaxFrameRejectRun) {
-    ++frameRejectRun;
+      dx.size() >= 3 && dx.head<3>().norm() > kFrameRejectMove) {
     ++rejectedFrames;
     return false;
   }
-  frameRejectRun = 0;
   for (int i = 0; i < kStateSize; i++) x[i] = xLin[i] + (i < n ? dx[i] : 0.0);
   const double inv = 1.0 / std::sqrt(x[12] * x[12] + x[9] * x[9] + x[10] * x[10] + x[11] * x[11]);
   for (int i = 9; i < 13; i++) x[i] *= inv;
   if (walked) { P.topLeftCorner(n, n) = Ppred; return true; }
+  // The dense Joseph form stays: expanding or regrouping it (n^2 m instead of n^3, another 25 %
+  // of replay CPU) cost testswing ~1.4 % tracking in fresh rooms, losing its numerical care.
   const Mat IKH = Mat::Identity(n, n) - K * H;
   P.topLeftCorner(n, n) = IKH * Ppred * IKH.transpose() + K * Rk * K.transpose();
   return true;
