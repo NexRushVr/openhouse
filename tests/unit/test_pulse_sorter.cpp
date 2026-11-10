@@ -425,7 +425,7 @@ SortedRun RunMixed(bool sorting) {
   lh::BaseDynamicState dyn;
   dyn.sobChannel = 0;
   source.SetKnownSobChannels({{0, {cfg, dyn}}});
-  source.SetSorting(sorting);
+  source.SetSorting(sorting, sorting);
   const double period = lh::sob::kPeriodTicks[0] * lh::sob::kTickSeconds;
   double t = 1.0;
   lh::OpticalFrame frame;
@@ -468,14 +468,31 @@ TEST(TrackingSourceSorting, OffByDefaultAndThenTheLh1PathAsBefore) {
 
 TEST(TrackingSourceSorting, TurnedOffItForgetsTheRotors) {
   lh::TrackingSource source;
-  source.SetSorting(true);
+  source.SetSorting(true, true);
   const double period = lh::sob::kPeriodTicks[0] * lh::sob::kTickSeconds;
   double t = 1.0;
   for (int k = 0; k < 150; ++k, t += period) source.OnLh2BeamWord({t, 0, 0, 0});
   ASSERT_EQ(source.Rotors(t).size(), 1u);
   EXPECT_TRUE(source.Rotors(t)[0].ready);
-  source.SetSorting(false);
+  source.SetSorting(false, false);
   EXPECT_TRUE(source.Rotors(t).empty());
-  source.SetSorting(true);
+  source.SetSorting(true, true);
   EXPECT_TRUE(source.Rotors(t).empty());  // learned again from LH2 words
+}
+
+// Learning only (the switch on, before it's in use): rotors are learned and LH1 pulses go down the
+// LH1 path as usual; sorting from then on needs nothing more learned.
+TEST(TrackingSourceSorting, LearnsBeforeItSortsAndIsReadyWhenItDoes) {
+  lh::TrackingSource source;
+  source.SetSorting(true, false);
+  EXPECT_FALSE(source.Sorting());
+  const double period = lh::sob::kPeriodTicks[0] * lh::sob::kTickSeconds;
+  double t = 1.0;
+  for (int k = 0; k < 150; ++k, t += period) source.OnLh2BeamWord({t, 0, 0, 0});
+  ASSERT_EQ(source.Rotors(t).size(), 1u);
+  EXPECT_TRUE(source.Rotors(t)[0].ready);
+  source.SetSorting(true, true);
+  EXPECT_TRUE(source.Sorting());
+  ASSERT_EQ(source.Rotors(t).size(), 1u);
+  EXPECT_TRUE(source.Rotors(t)[0].ready);  // the same line, kept
 }

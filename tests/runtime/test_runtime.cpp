@@ -833,16 +833,13 @@ TEST(MultiStation, DetectsDecodesAndTracks) {
 }
 
 // The 1.0 + 2.0 switch on in a room with no 2.0 station (lhbs multi-station, whose SteamVR
-// database has a 2.0 station of another room): in use only until the room is known, and then
-// multi-station detection and tracking are as with it off (DetectsDecodesAndTracks).
-TEST(MixedLight, StandsDownInARoomWithout2Point0Stations) {
+// database has a 2.0 station of another room): never in use, not even before the room is known,
+// so multi-station detection and tracking are as with it off (DetectsDecodesAndTracks).
+TEST(MixedLight, NeverInUseInARoomWithout2Point0Stations) {
   const std::string capture = TestCapture("ms-a/input.lhraw");
   if (!std::filesystem::exists(capture)) GTEST_SKIP();
   const auto r = MsRun(capture, "LHR-13DA81D1", 40, true);
-  std::string last;
-  for (const auto& e : r.events)
-    if (e.text.rfind("1.0 + 2.0 base stations together: ", 0) == 0) last = e.text;
-  EXPECT_EQ(last, "1.0 + 2.0 base stations together: not in use");
+  EXPECT_FALSE(MsHasEvent(r, "1.0 + 2.0 base stations together: in use"));
   EXPECT_TRUE(MsHasEvent(r, "multi-station layout detected"));
   ASSERT_FALSE(r.valid.empty());
   const double start = r.valid.front().first;

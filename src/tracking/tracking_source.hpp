@@ -41,13 +41,14 @@ class TrackingSource {
 
   // Not stock, for rooms with both kinds of base station (ai/driver/mixed_stations.md): LH1
   // pulses from 2.0 stations go down the LH2 path (PulseSorter), the rest down the LH1 path as
-  // usual. Off by default. While on, the sorter learns rotors from LH2 words, and lhbs
+  // usual. Off by default. learn: the sorter learns rotors from LH2 words, sorting nothing yet, so
+  // it's ready when sorting starts. sort: LH1 pulses are sorted too (and it learns), and lhbs
   // multi-station detection waits (LH_MULTISTATION=on still forces it).
-  void SetSorting(bool on);
-  bool Sorting() const;
+  void SetSorting(bool learn, bool sort);
+  bool Sorting() const;  // sort
   // Lets the tracker's pose help decide whose each pulse is, while sorting.
   void SetPoseView(PulseSorter::PoseView view);
-  // The sorter's rotors; none while not sorting.
+  // The sorter's rotors; none without a sorter.
   std::vector<PulseSorter::RotorState> Rotors(double now) const;
   // The scout (runtime/mixed_light.hpp), under the source's lock: PulseSorter::RecentPeriod and
   // SetDrift. Without a sorter, no period and nothing to set.
@@ -73,10 +74,11 @@ class TrackingSource {
   sob::SobDisambiguator sob_;
   // SetSorting. While it sorts, multi_ waits, as it was off for every test of this: a lone stock
   // 1.0 station passed for an lhbs multi-station layout there (ai/driver/mixed_stations.md).
-  std::unique_ptr<PulseSorter> sorter_;
+  std::unique_ptr<PulseSorter> sorter_;  // learning, and sorting if sorting_
+  bool sorting_ = false;
   PulseSorter::PoseView poseView_;
   std::deque<OpticalFrame> pendingLh1_;  // LH1 frames waiting for older LH2 frames
-  bool UseMulti() const { return multi_.Active() && (!sorter_ || multiMode_ == tdm::MultiDisambiguator::Mode::On); }
+  bool UseMulti() const { return multi_.Active() && (!sorting_ || multiMode_ == tdm::MultiDisambiguator::Mode::On); }
   std::deque<QueuedImu> imu_;
   double latestImuTime_ = 0;
   double lastPulseImuTime_ = 0;

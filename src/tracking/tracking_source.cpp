@@ -54,7 +54,7 @@ void TrackingSource::OnImu(const ImuSample& sample) {
 
 void TrackingSource::OnLightPulse(const LightPulse& pulse) {
   std::lock_guard lock(mutex_);
-  if (sorter_) {
+  if (sorting_) {
     // Reports can come grouped by sensor, so a pulse may be a little older than the last one.
     constexpr double kBeamDelay = 0.005;
     sorter_->DueBeamWords(pulse.time - kBeamDelay, [&](double t, int channel, int generation) {
@@ -70,7 +70,7 @@ void TrackingSource::OnLightPulse(const LightPulse& pulse) {
   const int type = tdm_.SensorType();
   tdm_.OnPulse(pulse.sensor, pulse.time, pulse.width);
   if (tdm_.SensorType() != type) multi_.SetSensorType(tdm_.SensorType());
-  if (!sorter_ || multiMode_ == tdm::MultiDisambiguator::Mode::On) multi_.OnPulse(pulse.sensor, pulse.time, pulse.width);
+  if (!sorting_ || multiMode_ == tdm::MultiDisambiguator::Mode::On) multi_.OnPulse(pulse.sensor, pulse.time, pulse.width);
   if (UseMulti()) {  // the stock path's frames would be mis-attributed; drop them
     while (tdm_.PopFrame(nullptr)) {}
   }
@@ -111,7 +111,7 @@ bool TrackingSource::PeekImuTime(DeviceTime* out) const {
 
 bool TrackingSource::PopFrame(OpticalFrame* out) {
   std::lock_guard lock(mutex_);
-  if (sorter_) {
+  if (sorting_) {
     // Both paths feed the filter here, and it drops a frame older than the last it used. LH2
     // frames are held back, so an LH1 frame waits for the LH2 frames older than it.
     OpticalFrame frame;
@@ -184,10 +184,12 @@ bool TrackingSource::PopIdentity(tdm::TdmDisambiguator::Identity* out) {
   return multi_.PopIdentity(out) || tdm_.PopIdentity(out);
 }
 
-void TrackingSource::SetSorting(bool on) {
+void TrackingSource::SetSorting(bool learn, bool sort) {
   std::lock_guard lock(mutex_);
-  if (on == (sorter_ != nullptr)) return;
-  if (!on) {
+  learn = learn || sort;
+  sorting_ = sort;
+  if (learn == (sorter_ != nullptr)) return;
+  if (!learn) {
     sorter_.reset();
     return;
   }
@@ -197,7 +199,7 @@ void TrackingSource::SetSorting(bool on) {
 
 bool TrackingSource::Sorting() const {
   std::lock_guard lock(mutex_);
-  return sorter_ != nullptr;
+  return sorting_;
 }
 
 void TrackingSource::SetPoseView(PulseSorter::PoseView view) {

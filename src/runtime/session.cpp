@@ -1472,25 +1472,29 @@ void SessionImpl::SetOutputTuning(double positionSmoothing, double rotationSmoot
 void SessionImpl::StartMixedLight(Device& d) {
   if (!d.tracker) return;
   const bool mixing = mixedActive_ && !d.lh1Only;
-  d.tracker->Source().SetSorting(mixing);
+  // With the switch on, rotors are learned from LH2 words even before it's in use, so they're ready
+  // when it is; in a 1.0-only room there are none.
+  d.tracker->Source().SetSorting(mixed_.enabled && !d.lh1Only, mixing);
   d.tracker->SetMixedLightScatter(mixing ? runtime::kSortedHitScatter : 0, mixing ? runtime::kLh1HitScatter : 0);
   if (mixing) d.lightMode = -1;
 }
 
 // Both kinds together only where there's a 2.0 station to sort: one in the room in use, or seen this
-// session; before any base is seen (no room chosen yet), any the room map or SteamVR's database knows.
-// In a 1.0-only room the switch alone would send devices looking for rotors in LH2 mode and hold
-// back lhbs multi-station detection, and SteamVR's database often has 2.0 stations of other rooms.
+// session. Before any base is seen no room is chosen yet, and it isn't in use: SteamVR's database often
+// has 2.0 stations of other rooms (the ms-a test capture's does), and in a 1.0-only room devices would
+// start in LH2 mode, where 1.0 stations can't be seen, waiting 30 s for 2.0 stations to wake. In use
+// there, it would also hold back lhbs multi-station detection.
 void SessionImpl::UpdateMixedRoom() {
   const auto* room = room_.Active();
   uint32_t lh2 = 0;
   for (const auto& [serial, b] : bases_)
-    if (b.config.model != 1 && !lh2 && (!room || b.seen || room->bases.count(serial))) lh2 = serial;
+    if (b.config.model != 1 && !lh2 && (b.seen || (room && room->bases.count(serial)))) lh2 = serial;
   const bool active = mixed_.enabled && lh2;
   if (active == mixedActive_) return;
   mixedActive_ = active;
-  // Starting, every device chooses again (StartMixedLight). Stopping, every device that was mixing goes to
-  // LH2 mode, 2.0 light alone, and the usual choice goes on from there. Not choosing afresh: in a room of
+  // Starting, every device chooses again (StartMixedLight). Switched off, every device that was mixing goes
+  // to LH2 mode, 2.0 light alone, and the usual choice goes on from there (a room without 2.0 stations,
+  // the other way to stop, is left to the usual choice as it is). Not choosing afresh: in a room of
   // both kinds that's LH1 mode ("default"), the headset's too, which the stock driver, when it runs the
   // headset's display, switches back after about 11 s, starting its own tracking over. And not staying in
   // LH1 mode: unsorted, a device's light there is full of 2.0 hits it can't use, and the restarts it keeps
@@ -1499,14 +1503,14 @@ void SessionImpl::UpdateMixedRoom() {
   for (auto& [id, d] : devices_) {
     const bool wasMixing = d.tracker && d.tracker->Source().Sorting();
     StartMixedLight(d);
-    if (active || !wasMixing || d.lightMode != 0 || !usb_ || !d.attached) continue;
+    if (active || mixed_.enabled || !wasMixing || d.lightMode != 0 || !usb_ || !d.attached) continue;
     usb_->SetOpticalSubProtocol(id, 1);
     d.lightMode = 1;
     d.modeSince = d.modeSent = now_;
     Emit(SessionEventType::Log, id, id + ": light mode LH2 (1.0 + 2.0 switched off)");
   }
   char text[160];
-  if (active) std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: in use (2.0 base %08X known)", lh2);
+  if (active) std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: in use (2.0 base %08X in the room)", lh2);
   else std::snprintf(text, sizeof text, "1.0 + 2.0 base stations together: not in use");
   Emit(SessionEventType::Log, "", text, LogLevel::Info);
 }
@@ -1521,12 +1525,15 @@ void SessionImpl::SetMixedLight(const MixedLightOptions& options) {
     if (mixedActive_ && d.lightMode == 1 && runtime::MixesLight(d.info.role, options) && !runtime::MixesLight(d.info.role, mixed_))
       d.modeSince = now_;
   }
+  const bool switched = options.enabled != mixed_.enabled;
   mixed_ = options;
   auto onOff = [](bool on) { return on ? "on" : "off"; };
   Emit(SessionEventType::Log, "", std::string("1.0 + 2.0 base stations together: switch ") + onOff(options.enabled) + " (controllers " +
                                   onOff(options.controllers) + ", trackers " + onOff(options.trackers) + ", scout " +
                                   onOff(options.scout) + ")", LogLevel::Info);
   UpdateMixedRoom();
+  if (switched)  // learning rotors starts or stops, in use or not
+    for (auto& [id, d] : devices_) StartMixedLight(d);
 }
 
 void SessionImpl::SaveSettings() {
