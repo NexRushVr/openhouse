@@ -116,8 +116,9 @@ then counted for more.
 (`LH_MULTISTATION=off`) for every test here. The room's lone stock 1.0 station (channel A, no cable) tripped
 it even with the 2.0 stations off: "multi-station layout detected (0 multi / 0 stock flash pairs)", through
 the rule for a lone station sweeping after far fewer than half its flashes. Sweeps were then dropped as out
-of sequence, and the headset never tracked, against 93 % with detection off. Seen in two runs, on channel A
-only; not looked into further. `LH_MULTISTATION=on` still forces it. Multi-station rooms with 2.0 stations
+of sequence, and the headset never tracked, against 93 % with detection off. Seen in three runs, on channel A
+only; the third was live with the switch off (4.5 min, the headset never tracked), so master does it too. Not
+looked into further. `LH_MULTISTATION=on` still forces it. Multi-station rooms with 2.0 stations
 are untested.
 
 ## Results
@@ -183,9 +184,15 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
   `ms-a` test capture's does), and in a 1.0-only room devices would otherwise start in LH2 mode, where no
   1.0 station can be seen, and wait 30 s for 2.0 stations to wake. So in a 1.0-only room it should never be
   in use (`MixedLight.NeverInUseInARoomWithout2Point0Stations`, a replay of an lhbs multi-station room).
-  That's a replay, which doesn't run the light-mode choice: no 1.0-only setup has run this live. Off, the
-  default, a 1.0-only setup gets the same poses as on master, byte for byte. In a 2.0-only room it still
-  sorts, with visits and their dropouts, for nothing gained.
+  Live, in a room of two stock 1.0 stations (a Beyond, an Index controller, a Vive wand), switching it on
+  mid-session left it out of use, and the headset and the wand kept tracking (99-100 % over the 30 s that
+  followed). Off, the default, a 1.0-only setup gets the same poses as on master, byte for byte. In a
+  2.0-only room it still sorts, with visits and their dropouts, for nothing gained.
+* A room of both kinds with its 2.0 stations off or asleep is still in use, since the room in use has
+  them. The headset is then held in LH2 mode, where it sees nothing from a 1.0 station, so it doesn't
+  track; the controllers spend 30 s of every 45 in LH2 mode, blind. Read from the code, not seen live
+  (the live run of that room with only its 1.0 station on had the switch off). Without the radio-mode fix,
+  SteamVR doesn't wake the stations on a setup like this one, which makes it likelier.
 * The first time, a room needs a 2.0 station seen, or in the room openhouse has, before this is in use. If
   the room in use was learned without them, devices beside a lit 1.0 station stay in LH1 mode and never see
   the 2.0 stations, as on master. Turning the 1.0 station off once lets them be seen; after that the room
