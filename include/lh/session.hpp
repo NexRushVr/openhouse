@@ -258,6 +258,8 @@ class Session {
   // Applied at once: devices that stop reading both kinds of base station go back to the
   // usual choice of light mode, and those that start go to LH2 mode to time the 2.0 stations.
   virtual void SetMixedLight(const MixedLightOptions& options) = 0;
+  // What's in force: settings.json "mixedLight" (or SessionOptions) until SetMixedLight.
+  virtual MixedLightOptions MixedLight() const { return {}; }
 
   // Wireless receivers (dongles), live USB only: serial, and the device paired and
   // connected to it now ("" if none).

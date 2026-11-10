@@ -964,3 +964,46 @@ TEST_P(Lh2Regression, TracksEveryDeviceWithoutJumps) {
   }
 }
 INSTANTIATE_TEST_SUITE_P(Bundled, Lh2Regression, ::testing::Values("lh2-one-controller", "lh2-five-devices"));
+
+namespace {
+lh::MixedLightOptions MixedFromSettings(const std::string& text, bool cliOn = false) {
+  const auto path = (std::filesystem::temp_directory_path() /
+                     ("lh-test-mixed-settings-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
+  { std::ofstream(path) << text; }
+  SessionOptions options;
+  options.replayPath = "no-such-capture.lhraw";  // Start reads the settings, then fails to open it
+  options.settingsPath = path;
+  options.mixedLight.enabled = cliOn;
+  auto session = Session::Create(options);
+  std::string error;
+  session->Start(&error);
+  const auto mixed = session->MixedLight();
+  session->Stop();
+  session.reset();
+  std::filesystem::remove(path);
+  return mixed;
+}
+}  // namespace
+
+TEST(MixedLight, SettingsFileTurnsItOnWithItsOptions) {
+  const auto m = MixedFromSettings(R"({"mixedLight": {"enabled": true, "trackers": false, "scout": false}})");
+  EXPECT_TRUE(m.enabled);
+  EXPECT_TRUE(m.controllers);
+  EXPECT_FALSE(m.trackers);
+  EXPECT_FALSE(m.scout);
+}
+
+TEST(MixedLight, SettingsFileAcceptsABool) {
+  EXPECT_TRUE(MixedFromSettings(R"({"mixedLight": true})").enabled);
+  EXPECT_FALSE(MixedFromSettings(R"({"mixedLight": false})").enabled);
+  EXPECT_FALSE(MixedFromSettings(R"({})").enabled);
+}
+
+TEST(MixedLight, ABadValueLeavesItOff) {
+  EXPECT_FALSE(MixedFromSettings(R"({"mixedLight": {"enabled": "yes"}})").enabled);
+  EXPECT_FALSE(MixedFromSettings(R"({"mixedLight": 1})").enabled);
+}
+
+TEST(MixedLight, TheCommandLineWins) {
+  EXPECT_TRUE(MixedFromSettings(R"({"mixedLight": false})", true).enabled);
+}

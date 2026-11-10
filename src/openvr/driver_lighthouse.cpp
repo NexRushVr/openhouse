@@ -1335,13 +1335,18 @@ class Provider : public IServerTrackedDeviceProvider {
     const double rotation = number("rotationSmoothingMs", 60) / 1000.0;
     const bool acceleration = flag("predictWithAcceleration", true);
     session_->SetOutputTuning(position, rotation, acceleration);
-    // 1.0 and 2.0 base stations together (ai/driver/mixed_stations.md).
-    lh::MixedLightOptions mixed;
-    mixed.enabled = flag("mixedLight", false);
-    mixed.controllers = flag("mixedLightControllers", true);
-    mixed.trackers = flag("mixedLightTrackers", true);
-    mixed.scout = flag("mixedLightScout", true);
-    session_->SetMixedLight(mixed);
+    // 1.0 and 2.0 base stations together (ai/driver/mixed_stations.md). SteamVR: the settings
+    // page, its missing values seeded from settings.json "mixedLight". Other hosts keep
+    // settings.json's: Monado's steamvr_lh answers every GetBool with false and no error.
+    if (HostName().rfind("vrserver", 0) == 0) {
+      const lh::MixedLightOptions file = session_->MixedLight();
+      lh::MixedLightOptions mixed;
+      mixed.enabled = flag("mixedLight", file.enabled);
+      mixed.controllers = flag("mixedLightControllers", file.controllers);
+      mixed.trackers = flag("mixedLightTrackers", file.trackers);
+      mixed.scout = flag("mixedLightScout", file.scout);
+      session_->SetMixedLight(mixed);
+    }
     // Record session: raw device data to <data>/recordings while on (replay with
     // `lhtool session`); turning it off saves the bug report zip with it.
     const bool record = flag("record", false);
