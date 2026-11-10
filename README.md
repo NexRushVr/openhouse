@@ -32,6 +32,7 @@ In any way, thanks to every contributor and user, along with people that did wor
 | Jitter and Stutters | Tracking corrections cause jitter and sudden movements on the devices | Output is predicted and smoothed, late wireless light is used instead of dropped, and still devices are held perfectly still |
 | Lighthouse 1.0 Support | Up to 2 basestations | Up to 4 basestations with the lhbs firmware (included) |
 | Lighthouse 2.0 Support | Up to 4 basestations used actively | Still 4 actively being used, but the switch that happens when one basestation is not visible is immediate, unlike SteamVR |
+| Mixed 1.0 and 2.0 Basestations | Not supported. A room has to be all 1.0 or all 2.0 basestations | Experimental: 1.0 and 2.0 basestations can be used together in one room (see [Mixed basestations](#mixed-basestations-experimental)) |
 
 Everything else that you'd expect still works. Headsets (tested on HTC Vive and Bigscreen Beyond, other headsets probably also work), controllers (Vive and Index), trackers (Vive, Tundra, modded vive controllers that appears as trackers etc.) along with SteamVR's pairing menu, power features such as powering the device off when SteamVR closes and so on.
 
@@ -129,8 +130,18 @@ In SteamVR's settings there is an **openhouse** page (Settings > openhouse, you 
 - **Position smoothing** and **Rotation smoothing** are how long a tracking correction takes to show up, 60 ms by default. Lower means less delay, but small corrections can show up as tiny jumps. 0 turns it off.
 - **Record Session (disable to save)** records your devices' raw data while it's on. When you turn it off, it saves a bug report zip with that recording (see below). The recordings themselves stay in `~/.local/share/openhouse/recordings` on Linux and `%LOCALAPPDATA%\openhouse\recordings` on Windows.
 - **Reset room** throws away the learned room and learns it again from scratch. Use it if you moved your basestations around and the room doesn't fix itself. It turns itself back off.
+- **Enable Mixed Basestations** and the three **Mixed Basestations** toggles below it, see [Mixed basestations](#mixed-basestations-experimental). Off by default.
 
 Changes apply while you play, within a second.
+
+### Mixed basestations (experimental)
+openhouse can use HTC Vive 1.0 and 2.0 basestations together in one room, which SteamVR can't. Turn it on with **Enable Mixed Basestations** in SteamVR's settings, or `"mixedLight": true` in `settings.json` under Monado and WiVRn. Things to know:
+- **Devices that do not work with 2.0 lighthouses can't be used** which includes the original HTC Vive headset, Vive wands and the 2017 Vive trackers (ones with gray power button instead of blue)
+- **The headset will stay on 2.0 mode at all times.** It times the 2.0 basestations for the other devices (the "headset times the 2.0 stations" toggle), so controllers and trackers have to switch less often. Switching that toggle off will cause the headset to blank the view every time a switch happens, so keep that in mind
+- **The first few minutes might be a bit problematic** as openhouse has to work out whether you're in a mixed room at all, so tracking can be shakier during the first session.
+- **It takes longer to settle.** In a mixed room, learning the room's layout takes a bit more time than with one kind of basestation. That is normal, and give it some time while the room is learned
+- If you encounter a problem with the room map or tracking, **click "Reset Room" on SteamVR or remove the roommap.json file in ~/.config/lh in Linux**
+- Controllers and trackers can be disabled separately for this mode, so you can only enable it on the type of device that you want to use with mixed basestation mode
 
 ### Environment variables
 You don't need any of these normally. On Linux, put them in SteamVR's launch options like `LH_LOG_LEVEL=DEBUG %command%`. On Windows, set them as system environment variables and restart Steam.

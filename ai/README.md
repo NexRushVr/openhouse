@@ -117,7 +117,7 @@ copies of that header in other projects must stay identical).
 
 ## State of the work (2026-11-10)
 
-Version 1.0.2 (`include/lh/version.hpp`; v1.0.1 shipped still saying 1.0.0). Recent work:
+Version 1.0.3 (`include/lh/version.hpp`; v1.0.1 shipped still saying 1.0.0). Recent work:
 * Rooms: one "learned" rule (`BaseStationState::learned`) drives settling, SteamVR base
   status, telemetry and the viewer. A base locks only within 20 mm. Locked bases are
   relearned by a bump or by the light (`Session::LightMovedLockedBase`: solves placing it
