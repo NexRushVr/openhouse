@@ -1373,6 +1373,19 @@ class Provider : public IServerTrackedDeviceProvider {
     // page, its missing values seeded from settings.json "mixedLight". Other hosts keep
     // settings.json's: Monado's steamvr_lh answers every GetBool with false and no error.
     if (HostName().rfind("vrserver", 0) == 0) {
+      // The sub-toggles default to on, but a key SteamVR has no default for can read false with
+      // no error (they showed off on Windows): the first time, they're written explicitly, and
+      // a hidden marker keeps whatever is chosen after that.
+      if (writeDefaults) {
+        EVRSettingsError e = VRSettingsError_None;
+        if (!VRSettings()->GetBool(kSection, "mixedLightDefaultsWritten", &e)) {
+          const lh::MixedLightOptions defaults = session_->MixedLight();
+          VRSettings()->SetBool(kSection, "mixedLightControllers", defaults.controllers);
+          VRSettings()->SetBool(kSection, "mixedLightTrackers", defaults.trackers);
+          VRSettings()->SetBool(kSection, "mixedLightScout", defaults.scout);
+          VRSettings()->SetBool(kSection, "mixedLightDefaultsWritten", true);
+        }
+      }
       const lh::MixedLightOptions file = session_->MixedLight();
       lh::MixedLightOptions mixed;
       mixed.enabled = flag("mixedLight", file.enabled);

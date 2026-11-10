@@ -1,6 +1,6 @@
 # 1.0 and 2.0 base stations together
 
-Not stock. Off by default: "Enable Mixed Basestations (1.0 and 2.0 together, EXPERIMENTAL, might change the room map)", in the "openhouse: Experimental" section of the SteamVR
+Not stock. Off by default: "Enable Mixed Basestations (1.0 and 2.0 together, EXPERIMENTAL, might change the room map)", at the end of the SteamVR
 settings page (`driver_openhouse/mixedLight`), `MixedLightOptions` in `lh/session.hpp`, `lhtool session
 ... --mixed-light` for replays. Off, or with no 2.0 station known, every device is on the usual
 light-mode choice (`Session::UpdateLightMode`) with no sorter: the output is the same as without this code.

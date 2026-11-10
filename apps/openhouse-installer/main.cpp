@@ -190,7 +190,7 @@ void CloseHosts() {
 // ---- the update check's registration ----
 
 struct Paths {
-  fs::path here, steamvr, directory, target, backup, schema, checkDir, checkManifest;
+  fs::path here, steamvr, directory, target, backup, schema, defaults, checkDir, checkManifest;
 };
 
 void SetCheckRegistration(const Paths& p, bool registerIt) {
@@ -257,6 +257,35 @@ void RemoveSchema(const Paths& p) {
   }
 }
 
+// ---- the settings page's defaults ----
+// SteamVR's "reset to default" takes values from the driver's default.vrsettings, SteamVR's
+// own file: without our section every toggle reset to off and every number to 0. One line
+// is added after its opening brace and removed again on uninstall; the rest stays SteamVR's.
+constexpr const char* kDefaultsLine =
+    R"("driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "record": false, "resetRoom": false, "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true },)";
+
+void InstallDefaults(const Paths& p) {
+  std::error_code ec;
+  if (!fs::exists(p.defaults, ec)) return;
+  std::string text = ReadFile(p.defaults);
+  if (text.find("\"driver_openhouse\"") != std::string::npos) return;
+  const size_t brace = text.find('{');
+  if (brace == std::string::npos) return;
+  text.insert(brace + 1, std::string("\n") + kDefaultsLine);
+  WriteText(p.defaults, text);
+}
+
+void RemoveDefaults(const Paths& p) {
+  std::error_code ec;
+  if (!fs::exists(p.defaults, ec)) return;
+  std::string text = ReadFile(p.defaults);
+  const std::string line = std::string("\n") + kDefaultsLine;
+  const size_t at = text.find(line);
+  if (at == std::string::npos) return;
+  text.erase(at, line.size());
+  WriteText(p.defaults, text);
+}
+
 // ---- actions ----
 
 void Install(const Paths& p) {
@@ -273,6 +302,7 @@ void Install(const Paths& p) {
   CopyOver(ours, p.target);
   if (ReadFile(p.target) != ReadFile(ours)) throw Failure("The installed driver doesn't match the package's (" + Show(p.target) + ")");
   InstallSchema(p);
+  InstallDefaults(p);
   const fs::path checkExe = p.here / "apps" / "openhouse-check.exe";
   if (fs::exists(checkExe)) {
     fs::create_directories(p.checkDir);
@@ -298,6 +328,7 @@ void Install(const Paths& p) {
 void Uninstall(const Paths& p) {
   // First, so the check goes even when there's no driver backup.
   RemoveSchema(p);
+  RemoveDefaults(p);
   SetCheckRegistration(p, false);
   // Only the files we put there: the folder is also the driver's data directory, with the
   // user's recordings (Record Session) in it.
@@ -350,6 +381,7 @@ int Run(int argc, wchar_t** argv) {
   p.target = p.directory / "driver_lighthouse.dll";
   p.backup = fs::path(p.target) += ".stock";
   p.schema = p.steamvr / "drivers" / "lighthouse" / "resources" / "settings" / "settingsschema.vrsettings";
+  p.defaults = p.schema.parent_path() / "default.vrsettings";
   p.checkDir = EnvPath(L"LOCALAPPDATA") / "openhouse";
   p.checkManifest = p.checkDir / "openhouse-check.vrmanifest";
   if (!fs::exists(p.target)) throw Failure("Driver not found at " + Show(p.target) + ". Run this with --steamvr PATH.");
