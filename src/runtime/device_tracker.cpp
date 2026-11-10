@@ -47,6 +47,8 @@ DeviceTracker::DeviceTracker(std::string id, TrackedObjectModel model, RoomMap* 
     : id_(std::move(id)), model_(std::move(model)), room_(room), source_(model_.sensorType, {}, !model_.sensorTypeKnown) {
   imuModel_ = std::make_shared<const TrackedObjectModel>(model_.InImuFrame());
   ResetFilter();
+  // While LH1 pulses are being sorted (1.0 and 2.0 stations together), the pose helps.
+  source_.SetPoseView([this](int sensor, double t, ExpectedHit* out) { return filter_->ExpectedHits(sensor, t, out); });
 }
 
 void DeviceTracker::ResetFilter() {
@@ -57,6 +59,7 @@ void DeviceTracker::ResetFilter() {
   predictOutput_ = smoothOutput_ = holdStill_ = !stock;
   inertialLag_ = stock ? 0.02 : 0.12;
   if (!stock) filter_->SetImprovements(true, kGateSigma, true);
+  filter_->SetMixedLightScatter(mixedScatter_.first, mixedScatter_.second);
   for (const auto& [serial, base] : bases_) filter_->OnBaseConfig(base.first, base.second);
   roomRevision_ = ~uint64_t{0};
   calibratedLogged_ = false;
@@ -190,9 +193,29 @@ void DeviceTracker::HandleFrame(const OpticalFrame& original) {
         // base). The limits themselves are unchanged; only the reason is recorded.
         if (streak == kRejectStreak) {
           const auto& f = filter_->Filter();
-          char text[200];
-          std::snprintf(text, sizeof text, "base %08X: %d well-lit frames rejected in a row (%s, %d sensor rows)",
-                        frame.baseSerial, streak, direct::RejectReasonName(f.lastRejectReason), f.lastRejectRows);
+          // An alternate base's limit says which slot tripped and how large the refused
+          // correction was: 1.02 deg against a 1 deg limit is a threshold problem, 40 deg is
+          // a pair that does not fit, and the two want opposite fixes. Position prints in
+          // cm, rotation in deg. The correction is the whole refused step, not the excess.
+          char tail[96] = "";
+          if (f.lastRejectSlot >= 0 && f.lastRejectLimit > 0) {
+            const auto u = direct::RejectUnitsFor(f.lastRejectReason);
+            std::snprintf(tail, sizeof tail, "; %08X: correction %.2f %s, limit %.2f %s",
+                          filter_->BaseSerial(f.lastRejectSlot + 1), f.lastRejectOver * u.scale, u.unit,
+                          f.lastRejectLimit * u.scale, u.unit);
+          } else if (f.lastRejectSlot < 0 && f.lastRejectLimit > 0) {
+            // A scalar limit (IMU rotation, gravity, angular rate): the reason says which
+            // one refused the frame, and the value says how far over it was - which is
+            // the difference between a threshold problem (2.1 deg against a 2 deg limit)
+            // and a pair that does not fit at all (40 deg). Without this the value was
+            // recorded and never reached the log.
+            const auto u = direct::RejectUnitsFor(f.lastRejectReason);
+            std::snprintf(tail, sizeof tail, "; correction %.2f %s, limit %.2f %s",
+                          f.lastRejectOver * u.scale, u.unit, f.lastRejectLimit * u.scale, u.unit);
+          }
+          char text[256];
+          std::snprintf(text, sizeof text, "base %08X: %d well-lit frames rejected in a row (%s, %d sensor rows%s)",
+                        frame.baseSerial, streak, direct::RejectReasonName(f.lastRejectReason), f.lastRejectRows, tail);
           Log(text);
         }
       } else if (filter_->LastOpticalTime() != lastOpticalBefore) {

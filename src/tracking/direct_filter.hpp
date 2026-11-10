@@ -63,6 +63,25 @@ inline const char* RejectReasonName(int reason) {
   }
 }
 
+// How a refused correction should be printed: the scale out of the filter's own units
+// and the unit's name. Rotation and tilt are radians in the filter, an alternate base's
+// position is metres, gravity magnitude is m/s^2 and the angular rate is rad/s.
+struct RejectUnits {
+  double scale;
+  const char* unit;
+};
+inline RejectUnits RejectUnitsFor(int reason) {
+  switch (reason) {
+    case kRejectImuRot:
+    case kRejectGravTilt:
+    case kRejectAltBaseRot: return {57.29577951308232, "deg"};  // rad -> deg
+    case kRejectAltBaseTrans: return {100.0, "cm"};             // m -> cm
+    case kRejectGravMag: return {1.0, "m/s2"};
+    case kRejectOmega: return {1.0, "rad/s"};
+    default: return {1.0, ""};
+  }
+}
+
 class DirectFilter {
  public:
   DirectFilter();
@@ -107,6 +126,13 @@ class DirectFilter {
   // Diagnostics: which limit refused the last frame, and how many sensor rows it had.
   int lastRejectReason = kRejectNone;
   int lastRejectRows = 0;
+  // When an alternate base's limit refused the frame: which slot (0..2, else -1), the
+  // size of the refused correction, and the limit it exceeded. Without the magnitude a log cannot tell a base that is 1.02 deg out
+  // (a limit worth loosening) from one that is 40 deg out (a pair that does not fit at
+  // all), and those want opposite fixes.
+  int lastRejectSlot = -1;
+  double lastRejectOver = 0;   // the refused correction: metres for position, radians for rotation
+  double lastRejectLimit = 0;  // the limit that was exceeded, same unit
 
   void DefaultState();                        // 0x3511a0 (state only)
   void InitialCovariance();                   // 0x350280 (diagonal only)
