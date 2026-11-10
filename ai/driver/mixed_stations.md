@@ -58,7 +58,7 @@ its own universe as it does. Using 1.0 light on the headset would need that comm
 Switching it off sends every device that was mixing to LH2 mode, 2.0 light alone, for the usual choice to
 go on from. Choosing afresh puts the headset in LH1 mode in a room of both kinds ("default"); leaving the
 controllers in LH1 mode leaves them on unsorted light (below). Live, the headset lost tracking after every
-switch-off either way, until this.
+switch-off either way. With this, switched off mid-session, it kept tracking (100 % over the next 30 s).
 
 **Unsorted light starves the other devices.** In a room with 2.0 stations lit, a device in LH1 mode that
 isn't sorting (master's choice in such a room, or any 1.0-only device) gets mostly 2.0 hits it can't use. It
