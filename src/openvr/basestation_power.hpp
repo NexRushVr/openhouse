@@ -2,8 +2,8 @@
 // room's bases when it starts and, when asked to in the settings, puts them to sleep (or
 // standby) when SteamVR exits.
 // SteamVR's own driver does this only through a headset's Bluetooth radio (Index, Vive
-// Pro), so with any other headset (Quest + Virtual Desktop, Bigscreen Beyond, ...) the
-// bases otherwise spin until they're unplugged.
+// Pro, Bigscreen Beyond), so with any other headset (a Quest through Virtual Desktop, ...)
+// the bases otherwise spin until they're unplugged.
 //
 // The Bluetooth work runs in lhbase (apps/lhbase), out of the host's process: it takes
 // a few seconds and has to finish after the host has gone at shutdown.
