@@ -1,6 +1,8 @@
 #include <cstdarg>
 #include <array>
 #include "usb_transport.hpp"
+
+#include <mutex>
 #include "device_config.hpp"
 #include "haptics.hpp"
 #include "platform/platform.hpp"
@@ -94,7 +96,12 @@ void ReportDecoder::AddEndpoint(const EndpointInfo& e) {
   if (e.kind == EndpointKind::Buttons) ep.buttons = std::make_unique<ButtonsReportParser>(dev, sink_);
   eps_[e.ep] = std::move(ep);
   // The buttons interface carries no config: its device attaches with its IMU interface.
-  if (e.kind != EndpointKind::Buttons && (fresh || !e.configJson.empty())) sink_->OnDeviceAttached(e.serial, e.configJson);
+  // Announced when it's new, carries a config, or is the device's only endpoint again after
+  // an unplug (a replugged device without a readable config was otherwise never re-attached, #49.3).
+  const bool alone = std::none_of(eps_.begin(), eps_.end(), [&](const auto& other) {
+    return other.first != e.ep && other.second.info.serial == e.serial;
+  });
+  if (e.kind != EndpointKind::Buttons && (fresh || alone || !e.configJson.empty())) sink_->OnDeviceAttached(e.serial, e.configJson);
 }
 
 void ReportDecoder::ResetWireless(Ep& ep) {
@@ -207,7 +214,14 @@ bool UsbTransport::RequestProtocolVersion(hid_device_* dev, int version) {
 }
 
 UsbTransport::OpenResult UsbTransport::OpenEndpoint(const hid_device_info* d, Open* out) {
-  hid_device* h = hid_open_path(d->path);
+  // One open at a time: hidapi's hid_open_path resets and sets a process-wide error string,
+  // which parallel opens would free twice (#49.5). The config read after it stays parallel.
+  static std::mutex openMutex;
+  hid_device* h = nullptr;
+  {
+    std::lock_guard openLock(openMutex);
+    h = hid_open_path(d->path);
+  }
   if (!h) {
     std::lock_guard lock(pathsMutex_);
     if (failedPaths_.insert(d->path).second) Log(LogLevel::Warn, "cannot open %s\n", d->path);
@@ -277,7 +291,8 @@ void UsbTransport::Enumerate(bool startup) {
       workers.emplace_back([&, i] { results[i] = OpenEndpoint(fresh[i], &opened[i]); });
     for (auto& w : workers) w.join();
   }
-  for (size_t i = 0; i < fresh.size() && !stop_; ++i) {
+  // Every opened handle goes to a list Stop() closes, stopping or not (#49.4).
+  for (size_t i = 0; i < fresh.size(); ++i) {
     Open& o = opened[i];
     const OpenResult result = results[i];
     if (result == OpenResult::Failed) continue;
@@ -625,7 +640,8 @@ void UsbTransport::Haptic(const DeviceId& serial, double frequency, double ampli
   // Coalesce by device: a newer command replaces a pending one.
   for (auto it = haptics_.begin(); it != haptics_.end();) {
     if (it->serial == serial && it->powerOff) return;
-    if (it->serial == serial) it = haptics_.erase(it); else ++it;
+    // Only pending pulses: a queued light-mode command must still go out (#49.2).
+    if (it->serial == serial && it->opticalMode < 0) it = haptics_.erase(it); else ++it;
   }
   if (haptics_.size() < 64) haptics_.push_back({serial, HapticReport(frequency, amplitude, duration), HostNow() + 0.1});
 }
@@ -680,7 +696,7 @@ void UsbTransport::Run() {
     std::vector<HapticCommand> commands;
     { std::lock_guard lock(hapticMutex_); commands.swap(haptics_); }
     for (const auto& command : commands) {
-      DeviceCommandResult result{command.serial, command.powerOff, "not-connected", 0, command.report};
+      DeviceCommandResult result{command.serial, command.powerOff, "not-connected", 0, command.report, command.opticalMode};
       if (passStart > command.deadline) result.status = "expired";
       else for (auto& o : open_) {
         if (o.disconnected || o.info.serial != command.serial) continue;
@@ -698,12 +714,17 @@ void UsbTransport::Run() {
       }
       if (opts_.onCommandResult) opts_.onCommandResult(result);
       else if (std::string(result.status) != "written")
-        Log(LogLevel::Debug, "%s: %s %s (%d bytes)\n", command.serial.c_str(), command.powerOff ? "power-off" : "haptic", result.status, result.bytes);
+        Log(LogLevel::Debug, "%s: %s %s (%d bytes)\n", command.serial.c_str(), command.powerOff ? "power-off" : command.opticalMode >= 0 ? "light mode" : "haptic", result.status, result.bytes);
     }
     for (auto& o : open_) {
       // Pairing a receiver that has a device: the device is replaced, so the receiver
       // is reopened (as one with no device) and the new one picked up when it connects.
-      if (!o.disconnected && TakePairing(o)) o.disconnected = true;
+      if (!o.disconnected && TakePairing(o)) {
+        // Pairing takes the receiver from its device: report it gone now, as the endpoint
+        // is closed below in this pass and nothing would say so later (#49.1).
+        o.disconnected = true;
+        sink_->OnDeviceDetached(o.info.serial);
+      }
       if (!o.disconnected) TakeRadioCommands(o);
     }
     for (auto& o : open_) {
