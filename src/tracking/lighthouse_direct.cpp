@@ -533,8 +533,13 @@ LighthouseDirect::Predicted LighthouseDirect::PredictNow() const {
     if (!(s.saturated & 0x38)) {
       w = imuRot.transpose() * (Eigen::Vector3d(s.gyro[0], s.gyro[1], s.gyro[2]) - Eigen::Vector3d(x[19], x[20], x[21]));
     }
-    Eigen::Vector3d a(x[6], x[7], x[8]);
-    if (!(s.saturated & 0x7)) {
+    // A clipped accelerometer reading is used as it is: it says the device accelerates at
+    // least that hard. Replacing the sample with the filter's acceleration (up to 120 ms
+    // old) ignored the hard stop at the end of a punch, the hardest acceleration of all,
+    // and the output flew on past the stop until the late light pulled it back (a user's
+    // Index controller: 10 cm past and back in 65 ms; error while moving p90 96 -> 52 mm).
+    Eigen::Vector3d a;
+    {
       const Eigen::Vector3d meas(s.accel[0], s.accel[1], s.accel[2]);
       const Eigen::Vector3d scaled((meas[0] - x[22]) * x[25], (meas[1] - x[23]) * x[26], (meas[2] - x[24]) * x[27]);
       a = q * (imuRot.transpose() * scaled) - gravity;
