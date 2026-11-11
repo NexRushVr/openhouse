@@ -810,10 +810,30 @@ void SessionImpl::UpdateLightMode(const DeviceId& id, Device& d) {
     return;
   }
   bool knownLh1 = false, knownLh2 = false, seenLh1 = false, seenLh2 = false;
-  for (const auto& [serial, b] : bases_) {
-    const bool lh2 = b.config.model != 1;
-    (lh2 ? knownLh2 : knownLh1) = true;
-    if (b.seen) (lh2 ? seenLh2 : seenLh1) = true;
+  const auto* activeRoom = room_.Active();
+  if (activeRoom && !activeRoom->bases.empty()) {
+    for (const auto& [serial, _] : activeRoom->bases) {
+      auto it = bases_.find(serial);
+      if (it != bases_.end()) {
+        const bool lh2 = it->second.config.model != 1;
+        (lh2 ? knownLh2 : knownLh1) = true;
+        if (it->second.seen) (lh2 ? seenLh2 : seenLh1) = true;
+      }
+    }
+  } else {
+    for (const auto& [serial, b] : bases_) {
+      const bool lh2 = b.config.model != 1;
+      if (b.seen) (lh2 ? seenLh2 : seenLh1) = true;
+    }
+    if (seenLh1 || seenLh2) {
+      knownLh1 = seenLh1;
+      knownLh2 = seenLh2;
+    } else {
+      for (const auto& [serial, b] : bases_) {
+        const bool lh2 = b.config.model != 1;
+        (lh2 ? knownLh2 : knownLh1) = true;
+      }
+    }
   }
   auto set = [&](int mode, const char* why) {
     usb_->SetOpticalSubProtocol(id, mode);
@@ -826,6 +846,16 @@ void SessionImpl::UpdateLightMode(const DeviceId& id, Device& d) {
     return;
   }
   if (now_ - d.lastGoodLight < kDark || now_ - d.modeSince < kDark) return;
+  if (knownLh1 && !knownLh2) {
+    if (d.lightMode != 0) set(0, "room has 1.0 bases");
+    else if (now_ - d.modeSince >= kResend) set(0, "re-send");
+    return;
+  }
+  if (knownLh2 && !knownLh1) {
+    if (d.lightMode != 1) set(1, "room has 2.0 bases");
+    else if (now_ - d.modeSince >= kResend) set(1, "re-send");
+    return;
+  }
   if (seenLh1 != seenLh2) {
     const int want = seenLh2 ? 1 : 0;
     if (want != d.lightMode) set(want, "room's bases");
@@ -1419,7 +1449,7 @@ SessionSnapshot SessionImpl::Snapshot() const {
     s.seen = b.seen;
     s.mode = b.dynamic.mode;
     // lhbs multi channels are its slot (1-4 on the display), stock ones A, b, c.
-    s.lh2 = b.dynamic.sobChannel >= 0;
+    s.lh2 = (b.config.model != 1) || (b.dynamic.sobChannel >= 0);
     if (b.dynamic.sobChannel >= 0) s.channel = std::to_string(b.dynamic.sobChannel + 1);  // LH2: 1-16
     else if (b.dynamic.multiSlot >= 0) s.channel = std::to_string(b.dynamic.multiSlot + 1);
     else if (b.dynamic.mode >= 1 && b.dynamic.mode <= 3) s.channel = std::string(1, "Abc"[b.dynamic.mode - 1]);
