@@ -192,6 +192,20 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
   keyframes at all in that recording; why isn't known.
 * Trackers, sync cables and lhbs multi-station alongside 2.0 stations: little tested. PulseSorter's 1.0 model
   times two slots (`flashIndex_ & 1`); a pair of 1.0 stations in b/c sweeps in four (b0 b1 c0 c1).
+* Leaks while sorting, measured 2026-11-11 by each 1.0 sample against the pose (two 1.0 stations in b/c,
+  three 2.0, a 2018 and a 3.0 tracker): with every rotor known, 22 % of the 2018 tracker's 1.0 samples were
+  over 20 mrad off, 7 % of the 3.0's; whole frames of them were 2.0 sweeps. Two causes:
+  - The 2018 tracker's 2.0 hits run longer (0.43 % past 56 us, against 0.09 % for the 3.0; more so close to a
+    station), and a pulse of flash width counted as a 1.0 flash: 10.5 % of its "flashes" were off the 1.0
+    schedule (3.3 % for the 3.0), each starting the 1.0 timing afresh mid-sweep and passed on unsorted. Now a
+    flash-long pulse off the schedule (more than 0.5 ms from a multiple of 1/120 s after the last flash, within
+    20 ms of it) is dropped (`PulseSorter::SetFlashSchedule`; off on the lhbs multi-station path, whose flashes
+    keep another schedule). Bad samples with every rotor known: 2018 tracker 22 % to 7.5 % (5 % with two
+    known), 3.0 7.4 % to 2.1 %. Its good pose 77.6 to 80.6 %, losses 12 to 9; the extra acceleration spikes
+    (35 to 45) were all in four reacquires falling elsewhere. Other replays unchanged. A share-of-flashes
+    guard instead of the multi-station switch turned it off just when the false flashes were many.
+  - Rotors not yet learned: a device goes to LH1 mode knowing the rotors seen on its visit (capped at 8 s, a
+    rotor still learning or not); one took 2 minutes to learn a station. With 1-2 known, 17-19 % stay bad.
 * Hard swings from a cold start are less reliable than in LH2 mode (above).
 * A rotor needs a visit with its station in view before its hits can be used.
 * Replays don't exercise the light-mode choice: a recording's modes are fixed.
