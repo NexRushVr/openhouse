@@ -10,8 +10,14 @@
 
 namespace lh::runtime {
 namespace {
-constexpr double kRelationshipTranslationVariance = 6.4e-05;   // 0x1a98e8
-constexpr double kRelationshipRotationVariance = 1.2184696791468344e-05;  // 0x1a96c8
+// How well a device must know a base relative to another before the room takes it (and so
+// places a new base). Not stock: 4x stock's variances (0x1a98e8, 0x1a96c8: 8 mm, 0.2 deg),
+// 16 mm and 0.4 deg. The room solver refines a placement from then on, so waiting for stock's
+// certainty only kept a new base out of the room: in a 1.0 + 2.0 room one 2.0 station took
+// 18.9 s to place (2.0 s now), the final room within 3 mm and 0.1 deg (one base 18 mm). Every
+// replay as good or better (fastmotion3/5: 6/11 losses -> 2/5); 16x placed bases 3-5 cm off.
+constexpr double kRelationshipTranslationVariance = 4 * 6.4e-05;
+constexpr double kRelationshipRotationVariance = 4 * 1.2184696791468344e-05;
 constexpr double kOutOfRangeAge = 0.25;                         // 0x1a9bc8 (status flag 8)
 // Prior variance (trace) for room-map bases entering a filter. Tuned on the static
 // controller recording: 1e-6 -> 0.34 mm std, 4e-4 -> 0.13 mm, 1e-3 -> 0.10 mm.
