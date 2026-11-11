@@ -117,16 +117,19 @@ Settings are in `~/.config/lh/` on Linux and `%APPDATA%\lh\` on Windows.
   "roles": { "LHR-180D3882": "generic_tracker" },
   "controllers": { "left": "LHR-8F9BE6F2", "right": "LHR-13DA81D1" },
   "disabledDevices": ["LHR-0AC3E7C8"],
+  "hideLostDevices": false,
   "mixedLight": { "enabled": true, "controllers": true, "trackers": true, "scout": true }
 }
 ```
 `roles` changes a device's role (`left_hand`, `right_hand` or `generic_tracker`, for example a Vive controller on your hip as a tracker), `controllers` picks which controller is left and right, and `disabledDevices` makes openhouse ignore a device completely.
+`hideLostDevices` makes controllers and trackers disappear while they've lost tracking, kinda like the stock driver, instead of staying where they were last seen (off by default). Under SteamVR it's **Hide lost controllers and trackers** in openhouse's settings page
 `mixedLight` (experimental, off by default) uses HTC Vive 1.0 and 2.0 base stations together in one room; `"mixedLight": true` is enough to turn it on. Under Monado and WiVRn this is the only switch. Under SteamVR the same options are at the end of openhouse's page in SteamVR's settings: this file only fills them in the first time, after that the page wins.
 - `preinit/` is optional. Device configs in it (`<serial>.json`) are created when openhouse starts and show up as connected but not tracking until you turn them on (after that they connect and disconnect normally), even under Monado, which only takes devices at startup. Save the configs of your connected devices with `lhtool configs ~/.config/lh/preinit` (close SteamVR/Monado first, turn everything on). If a device's own config differs from its file, openhouse uses the device's and updates the file.
 
 ### SteamVR settings
 In SteamVR's settings there is an **openhouse** page (Settings > openhouse, you might need to turn on "Advanced Settings"):
 - **Acceleration prediction** helps SteamVR predict where your controllers will be during fast motion, like in Beat Saber. On by default.
+- **Hide lost controllers and trackers** makes them disappear while they've lost tracking, like SteamVR's own driver, instead of staying where they were last seen. The headset is always kept where it was. Off by default.
 - **Position smoothing** and **Rotation smoothing** are how long a tracking correction takes to show up, 60 ms by default. Lower means less delay, but small corrections can show up as tiny jumps. 0 turns it off.
 - **Record Session (disable to save)** records your devices' raw data while it's on. When you turn it off, it saves a bug report zip with that recording (see below). The recordings themselves stay in `~/.local/share/openhouse/recordings` on Linux and `%LOCALAPPDATA%\openhouse\recordings` on Windows.
 - **Reset room** throws away the learned room and learns it again from scratch. Use it if you moved your basestations around and the room doesn't fix itself. It turns itself back off.

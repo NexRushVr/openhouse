@@ -30,6 +30,12 @@
                 "show_without_hmd": true
             },
             {
+                "name": "/settings/driver_openhouse/hideLostDevices",
+                "control": "toggle",
+                "label": "Hide lost controllers and trackers (instead of keeping them where they were last seen)",
+                "show_without_hmd": true
+            },
+            {
                 "name": "/settings/driver_openhouse/record",
                 "control": "toggle",
                 "label": "Record Session (disable to save)",

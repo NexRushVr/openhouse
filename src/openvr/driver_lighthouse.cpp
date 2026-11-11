@@ -72,6 +72,10 @@ namespace {
 
 using namespace vr;
 
+// "Hide lost devices" (SteamVR's settings page, or settings.json "hideLostDevices"):
+// set by ApplyTuning, read by Device::Update.
+std::atomic<bool> g_hideLost{false};
+
 double SteadyNow() {
   return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
@@ -353,6 +357,13 @@ class Device : public ITrackedDeviceServerDriver {
     if (pose.valid) {
       held_ = p;
       haveHeld_ = true;
+    } else if (p.deviceIsConnected && g_hideLost && !IsHmd()) {
+      // "Hide lost devices" (off by default): reported lost, as SteamVR's own driver does, so
+      // the host hides it until light finds it again. The headset is still held: a lost
+      // headset would show SteamVR's grey tracking-lost screen.
+      p.result = TrackingResult_Running_OutOfRange;
+      p.poseIsValid = false;
+      p.poseTimeOffset = 0;
     } else if (haveHeld_ && p.deviceIsConnected) {
       // Lost while on: held where it was last seen, as the stock driver does, until
       // light finds it again. liblh's lost record is an identity pose, which a host
@@ -1394,6 +1405,9 @@ class Provider : public IServerTrackedDeviceProvider {
       mixed.trackers = flag("mixedLightTrackers", file.trackers);
       mixed.scout = flag("mixedLightScout", file.scout);
       session_->SetMixedLight(mixed);
+      g_hideLost = flag("hideLostDevices", session_->HideLostDevices());
+    } else {
+      g_hideLost = session_->HideLostDevices();
     }
     // Record session: raw device data to <data>/recordings while on (replay with
     // `lhtool session`); turning it off saves the bug report zip with it.

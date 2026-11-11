@@ -260,6 +260,9 @@ class Session {
   virtual void SetMixedLight(const MixedLightOptions& options) = 0;
   // What's in force: settings.json "mixedLight" (or SessionOptions) until SetMixedLight.
   virtual MixedLightOptions MixedLight() const { return {}; }
+  // settings.json "hideLostDevices": a lost controller or tracker is reported as lost (the
+  // host hides it) instead of held where it was last seen. Off by default.
+  virtual bool HideLostDevices() const { return false; }
 
   // Wireless receivers (dongles), live USB only: serial, and the device paired and
   // connected to it now ("" if none).

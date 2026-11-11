@@ -262,13 +262,16 @@ void RemoveSchema(const Paths& p) {
 // own file: without our section every toggle reset to off and every number to 0. One line
 // is added after its opening brace and removed again on uninstall; the rest stays SteamVR's.
 constexpr const char* kDefaultsLine =
-    R"("driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "record": false, "resetRoom": false, "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true },)";
+    R"("driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "hideLostDevices": false, "record": false, "resetRoom": false, "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true },)";
+
+void RemoveDefaults(const Paths& p);
 
 void InstallDefaults(const Paths& p) {
   std::error_code ec;
   if (!fs::exists(p.defaults, ec)) return;
+  if (ReadFile(p.defaults).find(kDefaultsLine) != std::string::npos) return;
+  RemoveDefaults(p);  // an older version's line, with fewer settings
   std::string text = ReadFile(p.defaults);
-  if (text.find("\"driver_openhouse\"") != std::string::npos) return;
   const size_t brace = text.find('{');
   if (brace == std::string::npos) return;
   text.insert(brace + 1, std::string("\n") + kDefaultsLine);
@@ -279,10 +282,13 @@ void RemoveDefaults(const Paths& p) {
   std::error_code ec;
   if (!fs::exists(p.defaults, ec)) return;
   std::string text = ReadFile(p.defaults);
-  const std::string line = std::string("\n") + kDefaultsLine;
-  const size_t at = text.find(line);
+  // Any version's line: they all start the same and end at the line's end.
+  const size_t at = text.find("\n\"driver_openhouse\": {");
   if (at == std::string::npos) return;
-  text.erase(at, line.size());
+  size_t end = text.find('\n', at + 1);
+  if (end == std::string::npos) end = text.size();
+  else if (end > 0 && text[end - 1] == '\r') --end;  // keep the next line's break as it was
+  text.erase(at, end - at);
   WriteText(p.defaults, text);
 }
 

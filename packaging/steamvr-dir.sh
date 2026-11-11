@@ -131,10 +131,11 @@ install_schema() {
 # Its defaults, for SteamVR's "reset to default": one line added to SteamVR's own
 # default.vrsettings after its opening brace, removed again on uninstall.
 defaults="$(dirname "$schema")/default.vrsettings"
-defaults_line='"driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "record": false, "resetRoom": false, "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true },'
+defaults_line='"driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "hideLostDevices": false, "record": false, "resetRoom": false, "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true },'
 install_defaults() {
   [[ -f "$defaults" ]] || return 0
-  grep -q '"driver_openhouse"' "$defaults" && return 0
+  grep -qF "$defaults_line" "$defaults" && return 0
+  remove_defaults  # an older version's line, with fewer settings
   local tmp="$defaults.openhouse-tmp"
   # Its own line after the brace's, with the same ending (SteamVR's file has CRLF).
   awk -v line="$defaults_line" '{ print } !done && /\{/ { cr = sub(/\r$/, "") ? "\r" : ""; print line cr; done = 1 }' "$defaults" > "$tmp" && cat "$tmp" > "$defaults"
@@ -143,7 +144,8 @@ install_defaults() {
 remove_defaults() {
   [[ -f "$defaults" ]] || return 0
   local tmp="$defaults.openhouse-tmp"
-  awk -v line="$defaults_line" '{ l = $0; sub(/\r$/, "", l) } l != line { print }' "$defaults" > "$tmp" && cat "$tmp" > "$defaults"
+  # Any version's line: they all start the same.
+  awk '{ l = $0; sub(/\r$/, "", l) } index(l, "\"driver_openhouse\": {") != 1 { print }' "$defaults" > "$tmp" && cat "$tmp" > "$defaults"
   rm -f "$tmp"
   return 0
 }

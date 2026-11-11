@@ -300,6 +300,10 @@ class SessionImpl final : public Session, public InputSinkBase {
     std::lock_guard lock(mutex_);
     return mixed_;
   }
+  bool HideLostDevices() const override {
+    std::lock_guard lock(mutex_);
+    return hideLost_;
+  }
   bool Enabled(const DeviceId& id) const { return !disabled_.count(id); }
   void CollectLogs(Device* d);
   void MaybeSave();
@@ -333,6 +337,7 @@ class SessionImpl final : public Session, public InputSinkBase {
   std::map<std::string, std::string> roles_;  // settings.json "roles": serial -> tracked_controller_role
   bool persist_ = false;
   MixedLightOptions mixed_;  // SetMixedLight
+  bool hideLost_ = false;    // settings.json "hideLostDevices"
   bool mixedActive_ = false;  // mixed_.enabled, and a 2.0 station to sort (UpdateMixedRoom)
   double mixedSince_ = 0;     // when mixedActive_ last changed
   double lastLh2Light_ = -1e300;  // the latest beam word from any device
@@ -1568,6 +1573,10 @@ void SessionImpl::LoadSettings() {
         throw std::runtime_error("mixedLight must be true, false or an object");
       }
       mixed_ = o;
+    }
+    if (j.contains("hideLostDevices")) {
+      if (!j.at("hideLostDevices").is_boolean()) throw std::runtime_error("hideLostDevices must be true or false");
+      hideLost_ = j.at("hideLostDevices").get<bool>();
     }
     if (j.contains("roles")) {
       // {"LHR-...": "left_hand" | "right_hand" | "generic_tracker"}, per device; the rest
