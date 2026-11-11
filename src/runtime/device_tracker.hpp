@@ -72,6 +72,9 @@ class DeviceTracker {
     mixedScatter_ = {sortedSeconds, lh1Radians};
     filter_->SetMixedLightScatter(sortedSeconds, lh1Radians);
   }
+  // Whether LH1 frames may go into keyframes (runtime::Lh1KeyframesUsable): off while their light may hold
+  // 2.0 sweeps this device can't sort.
+  void SetLh1Keyframes(bool on) { lh1Keyframes_ = on; }
   DeviceTracker(std::string id, TrackedObjectModel model, RoomMap* room);
 
   void OnBaseConfig(const BaseConfig&, const BaseDynamicState&);
@@ -140,6 +143,7 @@ class DeviceTracker {
   std::deque<BufferedFrame> frameBuffer_;
   std::vector<std::shared_ptr<const Keyframe>> keyframes_;
   double lastKeyframe_ = -1e300;
+  bool lh1Keyframes_ = true;  // SetLh1Keyframes
   std::map<uint32_t, double> lastFrame_;  // last sweep time per base
   std::optional<double> preferLocatedSince_;
   uint64_t framesHandled_ = 0;

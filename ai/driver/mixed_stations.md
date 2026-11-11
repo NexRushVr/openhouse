@@ -179,7 +179,19 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
   now waits in the dark instead. A 1.0-only device turned on there with the switch off still
   breaks the headset's tracking, as it does on master; with it on, it's ignored once detected (live: the
   headset recovered within a few seconds of turning a wand on).
-* Trackers, several 1.0 stations, sync cables and lhbs multi-station alongside 2.0 stations: untested.
+* LH1 frames go into keyframes for the room map only while their light can be trusted
+  (`runtime::Lh1KeyframesUsable`): with 2.0 light about (a beam word from any device within 10 s), only from
+  a device that sorts and knows a rotor, heard within 180 s, for every 2.0 station seen this session. An LH1
+  frame takes every pulse in its sweep window, so a 2.0 sweep the device doesn't sort becomes wrong angles.
+  The filter drops those; the room solver took them. In a recording (2026-11-11, two 1.0 stations in b/c,
+  three 2.0, two trackers), the unsorted stretches (the replay starting mid-session before any rotor was
+  learned, and a tracker stuck in LH1 mode after the switch-off) put 40-55 % of the trackers' 1.0 samples
+  10 mrad to 0.8 rad off, and the solver loosened and relearned the 1.0 stations (live too, after the
+  switch-off). With this the room solve's fit went from 0.26-0.29 rad to 1.4 mrad, tracking unchanged with
+  the switch on. Replays of rooms without 2.0 light are byte-identical. While sorting, the trackers made no
+  keyframes at all in that recording; why isn't known.
+* Trackers, sync cables and lhbs multi-station alongside 2.0 stations: little tested. PulseSorter's 1.0 model
+  times two slots (`flashIndex_ & 1`); a pair of 1.0 stations in b/c sweeps in four (b0 b1 c0 c1).
 * Hard swings from a cold start are less reliable than in LH2 mode (above).
 * A rotor needs a visit with its station in view before its hits can be used.
 * Replays don't exercise the light-mode choice: a recording's modes are fixed.

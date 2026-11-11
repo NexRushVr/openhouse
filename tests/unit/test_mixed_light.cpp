@@ -440,3 +440,33 @@ TEST(LightMode, OneKindSeenKeepsThatMode) {
   v.inMode = 5.0;
   EXPECT_EQ(ChooseLightMode(v).mode, 0) << "re-sent now and then";
 }
+
+TEST(Lh1Keyframes, AlwaysWithout2Point0Light) {
+  lh::runtime::Lh1KeyframeView v;  // a 1.0-only room: no beam word from anyone, ever
+  EXPECT_TRUE(lh::runtime::Lh1KeyframesUsable(v));
+  v.sinceLh2Light = 30;
+  v.lh2Stations = 3;
+  EXPECT_TRUE(lh::runtime::Lh1KeyframesUsable(v)) << "2.0 stations seen, but dark for 30 s: turned off";
+}
+
+TEST(Lh1Keyframes, NotFromUnsortedLightWhile2Point0IsLit) {
+  lh::runtime::Lh1KeyframeView v;
+  v.sinceLh2Light = 0.2;
+  v.lh2Stations = 3;
+  EXPECT_FALSE(lh::runtime::Lh1KeyframesUsable(v)) << "switched off, or a 1.0-only device: not sorting";
+  v.sorting = true;
+  EXPECT_FALSE(lh::runtime::Lh1KeyframesUsable(v)) << "sorting, no rotor learned yet (a replay starting mid-session)";
+  v.knownRotors = 2;
+  EXPECT_FALSE(lh::runtime::Lh1KeyframesUsable(v)) << "a station seen whose rotor this device hasn't learned";
+  v.knownRotors = 3;
+  EXPECT_TRUE(lh::runtime::Lh1KeyframesUsable(v));
+}
+
+TEST(Lh1Keyframes, SortingNeedsARotorBeforeAnyStationIsSeen) {
+  lh::runtime::Lh1KeyframeView v;
+  v.sinceLh2Light = 0.2;  // 2.0 light, its station not identified yet
+  v.sorting = true;
+  EXPECT_FALSE(lh::runtime::Lh1KeyframesUsable(v));
+  v.knownRotors = 1;
+  EXPECT_TRUE(lh::runtime::Lh1KeyframesUsable(v));
+}

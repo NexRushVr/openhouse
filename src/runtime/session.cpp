@@ -261,6 +261,9 @@ class SessionImpl final : public Session, public InputSinkBase {
     };
     std::map<int, Scouted> scouted;
     bool scoutCovered = false;  // ScoutCovers, as last logged
+    // UpdateLh1Keyframes: as last set on the tracker, and when to look again.
+    bool lh1Keyframes = true;
+    double nextKeyframeCheck = 0;
   };
   struct Base {
     BaseConfig config;
@@ -274,6 +277,7 @@ class SessionImpl final : public Session, public InputSinkBase {
   void Touch(Device& d, double deviceTime);
   void Process(const DeviceId& id, Device& d);
   void UpdateLightMode(const DeviceId& id, Device& d);
+  void UpdateLh1Keyframes(const DeviceId& id, Device& d);
   void UpdateMixedLight(const DeviceId& id, Device& d);
   void UpdateMixedRoom();
   void StartMixedLight(Device& d);
@@ -780,6 +784,7 @@ void SessionImpl::OnImu(const DeviceId& id, const ImuSample& sample) {
   UpdateMixedRoom();
   UpdateScout();
   UpdateLightMode(id, found->second);
+  UpdateLh1Keyframes(id, found->second);
 }
 
 // A device reports LH1 or LH2 light, whichever mode the host set (LH1 after power-on). In
@@ -828,6 +833,30 @@ void SessionImpl::UpdateLightMode(const DeviceId& id, Device& d) {
     Emit(SessionEventType::Log, id, id + ": light mode " + (step.mode ? "LH2" : "LH1") + " (" + step.why + ")");
   d.lightMode = step.mode;
   d.modeSince = now_;
+}
+
+// runtime/mixed_light.hpp (Lh1KeyframesUsable): keeps LH1 frames that may hold unsorted 2.0 sweeps out of
+// the room map. Replays too: it decides from light, not from the light mode.
+void SessionImpl::UpdateLh1Keyframes(const DeviceId& id, Device& d) {
+  constexpr double kEvery = 0.1;  // s
+  if (!d.tracker || now_ < d.nextKeyframeCheck) return;
+  d.nextKeyframeCheck = now_ + kEvery;
+  runtime::Lh1KeyframeView view;
+  view.sinceLh2Light = now_ - lastLh2Light_;
+  for (const auto& [serial, b] : bases_) view.lh2Stations += b.seen && b.config.model != 1;
+  view.sorting = d.tracker->Source().Sorting();
+  const double deviceNow = std::max(d.lastPulseDeviceTime, d.lastBeamDeviceTime);
+  for (const auto& rotor : d.tracker->Source().Rotors(deviceNow))
+    view.knownRotors += rotor.ready && deviceNow - rotor.lastWord < runtime::kRotorFresh;
+  const bool usable = runtime::Lh1KeyframesUsable(view);
+  d.tracker->SetLh1Keyframes(usable);
+  if (usable == d.lh1Keyframes) return;
+  d.lh1Keyframes = usable;
+  char text[160];
+  std::snprintf(text, sizeof text, "%s: 1.0 light %s the room map (2.0 light %.0f s ago, sorting %s, %d of %d 2.0 rotors known)",
+                id.c_str(), usable ? "goes into" : "kept out of", std::min(view.sinceLh2Light, 999.0), view.sorting ? "on" : "off",
+                view.knownRotors, view.lh2Stations);
+  Emit(SessionEventType::Log, id, text, LogLevel::Debug);
 }
 
 // runtime/mixed_light.hpp: LH1 mode once the rotors in view are known, LH2 mode now and then to

@@ -244,6 +244,8 @@ void DeviceTracker::HandleFrame(const OpticalFrame& original) {
 
 void DeviceTracker::CollectKeyframe(const OpticalFrame& frame) {
   if (!filter_->Bootstrapped() || frame.baseSerial == 0) { frameBuffer_.clear(); return; }
+  // An LH1 frame (only those have a sync width class) whose light may hold unsorted 2.0 sweeps.
+  if (frame.nominalSyncWidth > 0 && !lh1Keyframes_) { frameBuffer_.clear(); return; }
   const auto& f = filter_->Filter();
   const uint32_t primary = filter_->BaseSerial(0);
   if (f.updateCount < 110 || Now() - filter_->LastOpticalTime() > 0.05) { frameBuffer_.clear(); return; }

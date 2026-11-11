@@ -113,6 +113,25 @@ struct LightModeView {
 constexpr double kLh2Lit = 10;
 MixedLightStep ChooseLightMode(const LightModeView& view);
 
+// Whether a device's LH1 frames may go into keyframes for the room map (DeviceTracker::SetLh1Keyframes). An
+// LH1 frame takes every pulse in its station's sweep window, so a 2.0 station's sweep that the device doesn't
+// sort lands in it as wrong angles. The filter checks each sample against its pose and drops those; the room
+// solver takes keyframes as they are. In a recording, unsorted stretches gave 40-55 % of the trackers' 1.0
+// samples 10 mrad to 0.8 rad off, and the solver, fitting them, loosened and relearned the 1.0 stations.
+// So while 2.0 light is about, LH1 frames go into keyframes only from a device that sorts, knowing every 2.0
+// station seen this session. Off: switched off, a 1.0-only device, or rotors not learned yet (a replay
+// starting mid-session, a station not yet visited). With no 2.0 light (a 1.0-only room), always on.
+struct Lh1KeyframeView {
+  double sinceLh2Light = 1e300;  // s since any device last had 2.0 light
+  int lh2Stations = 0;           // 2.0 stations seen this session
+  bool sorting = false;          // the device sorts its LH1 pulses
+  int knownRotors = 0;           // rotors it can predict, with a real beam word within kRotorFresh
+};
+// s since a rotor's last real beam word that it still counts as known: two visits' worth with the scout
+// (kScoutedVisitEvery). Its line is learned once and kept, but runs off while no words come.
+constexpr double kRotorFresh = 2 * kScoutedVisitEvery;
+bool Lh1KeyframesUsable(const Lh1KeyframeView& view);
+
 // The scout. Between a device's visits to LH2 mode its line for a 2.0 rotor runs off, about half of it
 // because the rotor's speed changes (stations warm for minutes after waking: 1-2.5 ppm over 10-15 min,
 // seen by every device alike). A device in LH2 mode all the while, the headset, measures that speed, so

@@ -125,4 +125,8 @@ MixedLightStep ChooseLightMode(const LightModeView& v) {
   return {1 - v.mode, "no usable light"};
 }
 
+bool Lh1KeyframesUsable(const Lh1KeyframeView& v) {
+  return v.sinceLh2Light >= kLh2Lit || (v.sorting && v.knownRotors >= std::max(1, v.lh2Stations));
+}
+
 }  // namespace lh::runtime
