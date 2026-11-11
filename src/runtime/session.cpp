@@ -789,10 +789,11 @@ void SessionImpl::OnImu(const DeviceId& id, const ImuSample& sample) {
 //  * Once bases of one kind only have been seen, keep every device in that mode (a device
 //    that sees nothing is occluded; re-send the mode now and then in case it was lost).
 //  * Otherwise (nothing seen yet, or a mixed room), a device without usable light for
-//    kDark seconds tries the other mode.
+//    2.5 s tries the other mode.
+//  * Not stock: a device that has sent 2.0 light stays in LH2 mode while any device sees 2.0
+//    light (runtime::ChooseLightMode, which decides all of the above).
 // With 1.0 and 2.0 stations used together (MixedLightOptions), UpdateMixedLight decides instead.
 void SessionImpl::UpdateLightMode(const DeviceId& id, Device& d) {
-  constexpr double kDark = 2.5, kResend = 5.0;
   if (!usb_ || !d.attached) return;
   if (mixedActive_ && !d.lh1Only) {
     UpdateMixedLight(id, d);
@@ -809,38 +810,24 @@ void SessionImpl::UpdateLightMode(const DeviceId& id, Device& d) {
     }
     return;
   }
-  bool knownLh1 = false, knownLh2 = false, seenLh1 = false, seenLh2 = false;
+  runtime::LightModeView view;
   for (const auto& [serial, b] : bases_) {
     const bool lh2 = b.config.model != 1;
-    (lh2 ? knownLh2 : knownLh1) = true;
-    if (b.seen) (lh2 ? seenLh2 : seenLh1) = true;
+    (lh2 ? view.knownLh2 : view.knownLh1) = true;
+    if (b.seen) (lh2 ? view.seenLh2 : view.seenLh1) = true;
   }
-  auto set = [&](int mode, const char* why) {
-    usb_->SetOpticalSubProtocol(id, mode);
-    if (mode != d.lightMode) Emit(SessionEventType::Log, id, id + ": light mode " + (mode ? "LH2" : "LH1") + " (" + why + ")");
-    d.lightMode = mode;
-    d.modeSince = now_;
-  };
-  if (d.lightMode < 0) {
-    set(knownLh2 && !knownLh1 ? 1 : 0, knownLh2 && !knownLh1 ? "room has 2.0 bases" : "default");
-    return;
-  }
-  if (now_ - d.lastGoodLight < kDark || now_ - d.modeSince < kDark) return;
-  if (seenLh1 != seenLh2) {
-    const int want = seenLh2 ? 1 : 0;
-    if (want != d.lightMode) set(want, "room's bases");
-    else if (now_ - d.modeSince >= kResend) set(want, "re-send");
-    return;
-  }
-  if (knownLh2 != knownLh1 && !seenLh1 && !seenLh2) {
-    // Nothing seen yet, but the room is known to be one kind: stay in its mode (an
-    // occluded device would otherwise spend seconds in the wrong one).
-    const int want = knownLh2 ? 1 : 0;
-    if (want != d.lightMode) set(want, "room's bases (known)");
-    else if (now_ - d.modeSince >= kResend) set(want, "re-send");
-    return;
-  }
-  set(1 - d.lightMode, "no usable light");
+  view.mode = d.lightMode;
+  view.inMode = now_ - d.modeSince;
+  view.dark = now_ - d.lastGoodLight;
+  view.everLh2 = d.everLh2;
+  view.sinceLh2Light = now_ - lastLh2Light_;
+  const runtime::MixedLightStep step = runtime::ChooseLightMode(view);
+  if (step.mode < 0) return;
+  usb_->SetOpticalSubProtocol(id, step.mode);
+  if (step.mode != d.lightMode)
+    Emit(SessionEventType::Log, id, id + ": light mode " + (step.mode ? "LH2" : "LH1") + " (" + step.why + ")");
+  d.lightMode = step.mode;
+  d.modeSince = now_;
 }
 
 // runtime/mixed_light.hpp: LH1 mode once the rotors in view are known, LH2 mode now and then to

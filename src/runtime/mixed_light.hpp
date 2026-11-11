@@ -89,6 +89,30 @@ constexpr double kLh2RoomDark = 90;
 // RoomDark: not in use for that room from now on (until the switch is turned on again).
 MixedRoomStep ChooseMixedRoom(const MixedRoomView& view);
 
+// The light mode while 1.0 + 2.0 isn't in use (switched off, or a room without a 2.0 station). As stock:
+// from the room's stations, and in a room with both kinds, a device without usable light (a 1.0 sync flash
+// or a beam word) for 2.5 s tries the other mode. Not stock: a device that has sent 2.0 light stays in LH2
+// mode while any device sees 2.0 light. In LH1 mode the 2.0 stations' sweeps reach it unsorted beside the
+// 1.0 stations' light and keep breaking its pose, and the 1.0 light then holds it there. In a recording, a
+// tracker dark for 2.5 s just after the switch went off had a good pose for 38 % of the next two minutes in
+// LH1 mode, against 95 % for the one beside it, still in LH2 mode. A device out of the 2.0 stations' view
+// waits in the dark instead.
+struct LightModeView {
+  int mode = -1;                 // 0 = LH1, 1 = LH2, -1 = not sent yet
+  double inMode = 0;             // s since this mode was chosen
+  double dark = 0;               // s without usable light
+  bool knownLh1 = false;         // the room has a 1.0 station (SteamVR's database)
+  bool knownLh2 = false;         // ... a 2.0 station
+  bool seenLh1 = false;          // a 1.0 station seen this session
+  bool seenLh2 = false;          // ... a 2.0 station
+  bool everLh2 = false;          // this device has sent a beam word this session
+  double sinceLh2Light = 1e300;  // s since any device last had 2.0 light
+};
+// s since any device's last beam word that still counts as 2.0 stations lit. Past it (they've been turned
+// off), stock's choice applies again.
+constexpr double kLh2Lit = 10;
+MixedLightStep ChooseLightMode(const LightModeView& view);
+
 // The scout. Between a device's visits to LH2 mode its line for a 2.0 rotor runs off, about half of it
 // because the rotor's speed changes (stations warm for minutes after waking: 1-2.5 ppm over 10-15 min,
 // seen by every device alike). A device in LH2 mode all the while, the headset, measures that speed, so

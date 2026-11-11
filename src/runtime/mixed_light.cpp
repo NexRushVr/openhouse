@@ -99,4 +99,30 @@ MixedRoomStep ChooseMixedRoom(const MixedRoomView& v) {
   return MixedRoomStep::InUse;
 }
 
+MixedLightStep ChooseLightMode(const LightModeView& v) {
+  constexpr double kDark = 2.5;  // stock's
+  if (v.mode < 0) {
+    const bool lh2 = v.knownLh2 && !v.knownLh1;
+    return {lh2 ? 1 : 0, lh2 ? "room has 2.0 bases" : "default"};
+  }
+  if (v.inMode < kDark) return {};
+  if (v.everLh2 && v.sinceLh2Light < kLh2Lit) {
+    if (v.mode != 1) return {1, "2.0 stations lit"};
+    return v.dark >= kDark && v.inMode >= kResend ? MixedLightStep{1, "re-send"} : MixedLightStep{};
+  }
+  if (v.dark < kDark) return {};
+  // Once stations of one kind only have been seen, every device stays in that mode (one that sees nothing is
+  // occluded); nothing seen yet in a room known to be one kind, the same. The command is sent again now and
+  // then in case it was lost.
+  int want = -1;
+  const char* why = nullptr;
+  if (v.seenLh1 != v.seenLh2) want = v.seenLh2 ? 1 : 0, why = "room's bases";
+  else if (v.knownLh2 != v.knownLh1 && !v.seenLh1 && !v.seenLh2) want = v.knownLh2 ? 1 : 0, why = "room's bases (known)";
+  if (want >= 0) {
+    if (want != v.mode) return {want, why};
+    return v.inMode >= kResend ? MixedLightStep{want, "re-send"} : MixedLightStep{};
+  }
+  return {1 - v.mode, "no usable light"};
+}
+
 }  // namespace lh::runtime

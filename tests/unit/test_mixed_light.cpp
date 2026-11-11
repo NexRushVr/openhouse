@@ -371,3 +371,72 @@ TEST(MixedLight, InUseOnlyWithA2Point0StationToSort) {
   v.lh2InRoom = false;
   EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse);
 }
+
+namespace {
+
+using lh::runtime::ChooseLightMode;
+using lh::runtime::LightModeView;
+
+// A device in a room with both kinds of station, both seen, 1.0 + 2.0 not in use.
+LightModeView InMixedRoom(int mode, double inMode, double dark) {
+  LightModeView v;
+  v.mode = mode;
+  v.inMode = inMode;
+  v.dark = dark;
+  v.knownLh1 = v.knownLh2 = v.seenLh1 = v.seenLh2 = true;
+  return v;
+}
+
+}  // namespace
+
+TEST(LightMode, StartsAsStock) {
+  LightModeView v;
+  v.knownLh1 = v.knownLh2 = true;
+  EXPECT_EQ(ChooseLightMode(v).mode, 0) << "a room with both kinds: LH1, the default";
+  v.knownLh1 = false;
+  EXPECT_EQ(ChooseLightMode(v).mode, 1) << "only 2.0 stations";
+}
+
+TEST(LightMode, TriesTheOtherModeWhenDarkWithout2Point0Light) {
+  LightModeView v = InMixedRoom(1, 3.7, 2.5);
+  EXPECT_EQ(ChooseLightMode(v).mode, 0) << "never sent 2.0 light: stock's choice";
+  v.everLh2 = true;
+  v.sinceLh2Light = 12;
+  EXPECT_EQ(ChooseLightMode(v).mode, 0) << "no 2.0 light from anyone for 12 s: they're off";
+}
+
+TEST(LightMode, StaysInLh2While2Point0StationsAreLit) {
+  // Live, 2026-11-11: dark 2.5 s just after the switch went off, while the tracker beside it had 2.0 light.
+  LightModeView v = InMixedRoom(1, 3.7, 2.5);
+  v.everLh2 = true;
+  v.sinceLh2Light = 0.5;
+  EXPECT_EQ(ChooseLightMode(v).mode, -1);
+  v.inMode = v.dark = 5.0;
+  const auto step = ChooseLightMode(v);
+  EXPECT_EQ(step.mode, 1);
+  EXPECT_EQ(std::string(step.why), "re-send");
+}
+
+TEST(LightMode, LeavesLh1While2Point0StationsAreLit) {
+  LightModeView v = InMixedRoom(0, 3.0, 0.0);  // tracking on the 1.0 light, which holds it there under stock
+  v.everLh2 = true;
+  v.sinceLh2Light = 0.1;
+  const auto step = ChooseLightMode(v);
+  EXPECT_EQ(step.mode, 1);
+  EXPECT_EQ(std::string(step.why), "2.0 stations lit");
+  v.inMode = 1.0;
+  EXPECT_EQ(ChooseLightMode(v).mode, -1) << "not straight after a change";
+  v.inMode = 3.0;
+  v.everLh2 = false;
+  EXPECT_EQ(ChooseLightMode(v).mode, -1) << "a device that never sent 2.0 light (a 1.0-only one) stays";
+}
+
+TEST(LightMode, OneKindSeenKeepsThatMode) {
+  LightModeView v = InMixedRoom(1, 3.0, 3.0);
+  v.seenLh2 = false;
+  EXPECT_EQ(ChooseLightMode(v).mode, 0) << "only 1.0 stations seen";
+  v.mode = 0;
+  EXPECT_EQ(ChooseLightMode(v).mode, -1);
+  v.inMode = 5.0;
+  EXPECT_EQ(ChooseLightMode(v).mode, 0) << "re-sent now and then";
+}

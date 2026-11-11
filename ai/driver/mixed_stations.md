@@ -170,8 +170,13 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
 * 1.0-only devices (original Vive headset, Vive wands, 2017 Vive Tracker) get nothing from this, and are
   ignored once they show themselves (above). The detection worked live on a Vive wand; an original Vive
   headset, which would then lose tracking, wasn't at hand.
-* With the switch off, master's light-mode choice runs, and in a room of both kinds it puts devices in LH1
-  mode unsorted, starving the others (above). So with the switch off a 1.0-only device turned on there
+* With the switch off, the usual light-mode choice runs (`runtime::ChooseLightMode`), and in a room of both
+  kinds it starts devices in LH1 mode unsorted, starving the others (above). Unlike master, a device that has
+  sent 2.0 light stays in LH2 mode while any device sees 2.0 light (`kLh2Lit`, 10 s). Master sent it to LH1
+  mode after 2.5 s without light, and the 1.0 light then held it there: in a recording (2026-11-11), a
+  tracker dark for 2.5 s just after the switch-off had a good pose for 38 % of the next two minutes in the
+  replay, against 95 % for the tracker beside it, still in LH2 mode. A device out of the 2.0 stations' view
+  now waits in the dark instead. A 1.0-only device turned on there with the switch off still
   breaks the headset's tracking, as it does on master; with it on, it's ignored once detected (live: the
   headset recovered within a few seconds of turning a wand on).
 * Trackers, several 1.0 stations, sync cables and lhbs multi-station alongside 2.0 stations: untested.
