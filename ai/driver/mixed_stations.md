@@ -206,6 +206,18 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
     guard instead of the multi-station switch turned it off just when the false flashes were many.
   - Rotors not yet learned: a device goes to LH1 mode knowing the rotors seen on its visit (capped at 8 s, a
     rotor still learning or not); one took 2 minutes to learn a station. With 1-2 known, 17-19 % stay bad.
+* What's left over is caught by the sweep's direction (`runtime::ForeignSweeps`, `DeviceTracker::DropForeignSweeps`),
+  with no timing: a 1.0 frame's samples, each against where the pose puts the frame's station's sweep, in
+  sweeps (hits under 150 us apart); one of 3 samples or more whose residuals spread over 4 mrad about their
+  median crossed the device at another tilt, a 2.0 sweep, and is dropped before the filter. On while any
+  device has had 2.0 light in the last 10 s, so 1.0-only rooms are untouched (byte-identical replays); not
+  while the device turns faster than 4 rad/s (its pose spreads its own sweeps then: a struggling 3.0 tracker
+  lost 3 more times checked throughout).
+  Offline on the 13:02 samples: 70 % (3.0) and 51 % (2018) of those over 20 mrad off went, 0.7 % and 0.3 % of
+  those within 5 mrad. Replays against the flash fix alone: the 2018 tracker's good pose 80.6 to 84.0 % at
+  13:02 (spikes about even), 83.9 to 85.2 % at 09:47; a left Knuckles in the 11-10 shake 88.6 to 99.3 %,
+  losses 2 to 1, 2 cm jumps 39 to 6; a right Knuckles (11-09, one 1.0 and three 2.0) 68.2 to 70.7 %, jumps
+  173 to 103. The 3.0 tracker at 13:02 even (68.6 / 68.3 %).
 * Hard swings from a cold start are less reliable than in LH2 mode (above).
 * A rotor needs a visit with its station in view before its hits can be used.
 * Replays don't exercise the light-mode choice: a recording's modes are fixed.

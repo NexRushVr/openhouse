@@ -850,6 +850,8 @@ void SessionImpl::UpdateLh1Keyframes(const DeviceId& id, Device& d) {
     view.knownRotors += rotor.ready && deviceNow - rotor.lastWord < runtime::kRotorFresh;
   const bool usable = runtime::Lh1KeyframesUsable(view);
   d.tracker->SetLh1Keyframes(usable);
+  // runtime::ForeignSweeps (a 1.0-only device's light isn't used while 2.0 stations are lit).
+  d.tracker->SetLh1SweepCheck(view.sinceLh2Light < runtime::kLh2Lit && !d.lh1Only);
   if (usable == d.lh1Keyframes) return;
   d.lh1Keyframes = usable;
   char text[160];

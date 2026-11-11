@@ -1,4 +1,5 @@
 #include "device_tracker.hpp"
+#include "mixed_light.hpp"
 
 #include "tracking/lighthouse_model.hpp"
 
@@ -130,8 +131,53 @@ void DeviceTracker::Process(std::vector<std::pair<BaseConfig, BaseDynamicState>>
   UpdateOutput();
 }
 
+// runtime::ForeignSweeps on a 1.0 frame: each sample against where the pose puts the frame's station's sweep.
+void DeviceTracker::DropForeignSweeps(OpticalFrame* f) {
+  constexpr double kTwoPi = 6.283185307179586;
+  std::vector<size_t> order(f->samples.size());
+  for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return f->samples[a].time < f->samples[b].time; });
+  std::vector<runtime::SweepSample> sweep;
+  sweep.reserve(order.size());
+  for (const size_t i : order) {
+    const OpticalSample& s = f->samples[i];
+    runtime::SweepSample x;
+    x.time = s.time;
+    ExpectedHit expected[PulseSorter::kMaxExpected];
+    const int n = filter_->ExpectedHits(s.sensor, s.time + 0.5 * s.width, expected);
+    for (int k = 0; k < n; ++k)
+      if (!expected[k].lh2 && expected[k].base == f->baseSerial && expected[k].axis == f->axis) {
+        x.residual = std::remainder(s.angle - expected[k].angle, kTwoPi);
+        x.judged = true;
+      }
+    sweep.push_back(x);
+  }
+  const std::vector<bool> drop = runtime::ForeignSweeps(sweep);
+  std::vector<bool> dropSample(f->samples.size(), false);
+  size_t dropped = 0;
+  for (size_t j = 0; j < order.size(); ++j)
+    if (drop[j]) dropSample[order[j]] = true, ++dropped;
+  if (!dropped) return;
+  std::vector<OpticalSample> kept;
+  kept.reserve(f->samples.size() - dropped);
+  for (size_t i = 0; i < f->samples.size(); ++i)
+    if (!dropSample[i]) kept.push_back(f->samples[i]);
+  f->samples = std::move(kept);
+  foreignSweepSamples_ += dropped;
+}
+
 void DeviceTracker::HandleFrame(const OpticalFrame& original) {
-  const OpticalFrame& frame = original;
+  // A 1.0 frame (only those have a sync width class) while 2.0 light is about: 2.0 sweeps out first, while
+  // the device turns slowly enough for its pose to judge them (runtime::kSweepMaxTurn).
+  OpticalFrame checked;
+  const auto& x = filter_->Filter().x;
+  const bool check = lh1SweepCheck_ && original.nominalSyncWidth > 0 && filter_->Bootstrapped() &&
+                     Eigen::Vector3d(x[13], x[14], x[15]).norm() < runtime::kSweepMaxTurn;
+  if (check) {
+    checked = original;
+    DropForeignSweeps(&checked);
+  }
+  const OpticalFrame& frame = check ? checked : original;
   const bool wasTracking = filter_->Bootstrapped();
 
   if (frame.baseSerial) lastFrame_[frame.baseSerial] = frame.syncTime;

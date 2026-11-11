@@ -129,4 +129,29 @@ bool Lh1KeyframesUsable(const Lh1KeyframeView& v) {
   return v.sinceLh2Light >= kLh2Lit || (v.sorting && v.knownRotors >= std::max(1, v.lh2Stations));
 }
 
+std::vector<bool> ForeignSweeps(const std::vector<SweepSample>& samples) {
+  std::vector<bool> drop(samples.size(), false);
+  auto median = [](std::vector<double> v) {
+    std::nth_element(v.begin(), v.begin() + std::ptrdiff_t(v.size() / 2), v.end());
+    return v[v.size() / 2];
+  };
+  size_t first = 0;
+  while (first < samples.size()) {
+    size_t end = first + 1;
+    while (end < samples.size() && samples[end].time - samples[end - 1].time < kSweepGap) ++end;
+    std::vector<double> residuals;
+    for (size_t i = first; i < end; ++i)
+      if (samples[i].judged) residuals.push_back(samples[i].residual);
+    if (int(residuals.size()) >= kSweepMinSamples) {
+      const double centre = median(residuals);
+      std::vector<double> off;
+      for (const double r : residuals) off.push_back(std::fabs(r - centre));
+      if (median(off) > kSweepSpread)
+        for (size_t i = first; i < end; ++i) drop[i] = true;
+    }
+    first = end;
+  }
+  return drop;
+}
+
 }  // namespace lh::runtime

@@ -19,6 +19,8 @@
 // Live only: a replay's modes are in its recording.
 #pragma once
 
+#include <vector>
+
 #include "lh/session.hpp"
 
 namespace lh::runtime {
@@ -131,6 +133,28 @@ struct Lh1KeyframeView {
 // (kScoutedVisitEvery). Its line is learned once and kept, but runs off while no words come.
 constexpr double kRotorFresh = 2 * kScoutedVisitEvery;
 bool Lh1KeyframesUsable(const Lh1KeyframeView& view);
+
+// A 1.0 frame takes every pulse in its sweep window, so a 2.0 sweep that wasn't sorted out lands in it as
+// 1.0 samples (a rotor not learned yet, a 1.0-only device, the switch off). Against where the pose puts the
+// frame's own station's sweep, one sweep's samples (hits less than kSweepGap apart) are off alike: by the
+// pose's error, or the timing's. A 2.0 sweep crosses the device at another tilt and speed, so its sensors
+// are off by different amounts. So a sweep of at least kSweepMinSamples samples spreading more than
+// kSweepSpread about their median is dropped, before the filter or the room map sees it. In a recording
+// (2026-11-11 13:02, two 1.0 and three 2.0 stations): of the samples over 20 mrad off, 70 % of a 3.0
+// tracker's and 51 % of a 2018 tracker's went, of those within 5 mrad 0.7 % and 0.3 %. No timing needed,
+// only a pose, and one that holds: turning fast, its error spreads a sweep's own samples too, and checked
+// then a struggling tracker lost more light and tracking (3 more losses in that recording); above
+// kSweepMaxTurn the check waits.
+constexpr double kSweepGap = 150e-6, kSweepSpread = 4e-3;  // s, rad
+constexpr int kSweepMinSamples = 3;
+constexpr double kSweepMaxTurn = 4.0;  // rad/s
+struct SweepSample {
+  double time = 0;      // the pulse's start
+  double residual = 0;  // rad, its angle less the pose's for the frame's station and axis
+  bool judged = false;  // the pose has one
+};
+// In time order; true for each sample to drop.
+std::vector<bool> ForeignSweeps(const std::vector<SweepSample>& samples);
 
 // The scout. Between a device's visits to LH2 mode its line for a 2.0 rotor runs off, about half of it
 // because the rotor's speed changes (stations warm for minutes after waking: 1-2.5 ppm over 10-15 min,

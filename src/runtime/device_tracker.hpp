@@ -75,6 +75,10 @@ class DeviceTracker {
   // Whether LH1 frames may go into keyframes (runtime::Lh1KeyframesUsable): off while their light may hold
   // 2.0 sweeps this device can't sort.
   void SetLh1Keyframes(bool on) { lh1Keyframes_ = on; }
+  // Whether 1.0 frames are checked for 2.0 sweeps that weren't sorted out (runtime::ForeignSweeps): on
+  // while 2.0 light is about. ForeignSweepSamples: how many samples that dropped.
+  void SetLh1SweepCheck(bool on) { lh1SweepCheck_ = on; }
+  uint64_t ForeignSweepSamples() const { return foreignSweepSamples_; }
   DeviceTracker(std::string id, TrackedObjectModel model, RoomMap* room);
 
   void OnBaseConfig(const BaseConfig&, const BaseDynamicState&);
@@ -109,6 +113,7 @@ class DeviceTracker {
   void TrackStillness(const ImuSample&);
   void UpdateOutput();
   void CollectKeyframe(const OpticalFrame& frame);
+  void DropForeignSweeps(OpticalFrame* frame);
   double Now() const;
   void Log(std::string text) { logs_.push_back(id_ + ": " + text); }
 
@@ -144,6 +149,8 @@ class DeviceTracker {
   std::vector<std::shared_ptr<const Keyframe>> keyframes_;
   double lastKeyframe_ = -1e300;
   bool lh1Keyframes_ = true;  // SetLh1Keyframes
+  bool lh1SweepCheck_ = false;  // SetLh1SweepCheck
+  uint64_t foreignSweepSamples_ = 0;
   std::map<uint32_t, double> lastFrame_;  // last sweep time per base
   std::optional<double> preferLocatedSince_;
   uint64_t framesHandled_ = 0;

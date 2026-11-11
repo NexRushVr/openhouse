@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 
 #include "runtime/mixed_light.hpp"
@@ -469,4 +470,49 @@ TEST(Lh1Keyframes, SortingNeedsARotorBeforeAnyStationIsSeen) {
   EXPECT_FALSE(lh::runtime::Lh1KeyframesUsable(v));
   v.knownRotors = 1;
   EXPECT_TRUE(lh::runtime::Lh1KeyframesUsable(v));
+}
+
+namespace {
+
+using lh::runtime::ForeignSweeps;
+using lh::runtime::SweepSample;
+
+// n samples 20 us apart from `from`, off the pose by `offset` plus `step` per sample.
+void Sweep(std::vector<SweepSample>* v, double from, int n, double offset, double step) {
+  for (int i = 0; i < n; ++i) v->push_back({from + i * 20e-6, offset + i * step, true});
+}
+
+int Dropped(const std::vector<bool>& d) { return int(std::count(d.begin(), d.end(), true)); }
+
+}  // namespace
+
+TEST(ForeignSweeps, ASweepOffAlikeIsTheStationsOwn) {
+  std::vector<SweepSample> v;
+  Sweep(&v, 1.0, 6, 0.05, 0.0002);  // 50 mrad off, all alike: the pose's error or the timing's
+  EXPECT_EQ(Dropped(ForeignSweeps(v)), 0);
+}
+
+TEST(ForeignSweeps, ASweepAtAnotherTiltIsDropped) {
+  std::vector<SweepSample> v;
+  Sweep(&v, 1.0, 6, 0.0, 0.02);  // each sensor 20 mrad further off than the last
+  EXPECT_EQ(Dropped(ForeignSweeps(v)), 6);
+}
+
+TEST(ForeignSweeps, TooFewToJudgeAreKept) {
+  std::vector<SweepSample> v;
+  Sweep(&v, 1.0, 2, 0.0, 0.05);
+  EXPECT_EQ(Dropped(ForeignSweeps(v)), 0);
+  v.push_back({1.0 + 40e-6, 0.3, false});  // a third, but the pose has nothing for it
+  EXPECT_EQ(Dropped(ForeignSweeps(v)), 0);
+}
+
+TEST(ForeignSweeps, TwoSweepsInOneFrameAreJudgedApart) {
+  std::vector<SweepSample> v;
+  Sweep(&v, 1.0, 5, 0.001, 0.0001);   // the station's own
+  Sweep(&v, 1.003, 5, 0.1, 0.03);     // 3 ms on: a 2.0 sweep
+  v.push_back({1.003 + 50e-6, 0.0, false});  // in that sweep, unjudged: it goes with it
+  std::sort(v.begin(), v.end(), [](const SweepSample& a, const SweepSample& b) { return a.time < b.time; });
+  const auto d = ForeignSweeps(v);
+  EXPECT_EQ(Dropped(d), 6);
+  for (size_t i = 0; i < v.size(); ++i) EXPECT_EQ(d[i], v[i].time > 1.002) << i;
 }
