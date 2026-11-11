@@ -96,8 +96,10 @@ int Usage() {
           "  lhtool track live [SECONDS] [--db DATABASE.json]\n"
           "  lhtool session IN.lhraw|live [--seconds N] [--rate HZ] [--room ROOM.json] [--realtime] [--disable SERIAL]... [--settings SETTINGS.json] [--steam-db DB.json|-] [--preinit DIR|-]\n"
           "      [--from S] [--to S] [--only SERIAL]... [--trace OUT.jsonl] [--smoothing S] [--no-acceleration] [--mixed-light]\n"
+          "      [--mixed-switch S]...\n"
           "      replay window (capture seconds), devices, and every pose at 100 Hz of capture time;\n"
           "      --mixed-light: 1.0 and 2.0 base stations together, as the SteamVR settings switch\n"
+          "      --mixed-switch: flip that switch at S capture seconds, as it was live\n"
           "      liblh session: shared room map, roles from device JSON, Index input; JSON Lines\n"
           "  lhtool haptics SERIAL [--frequency HZ] [--amplitude 0..1] [--duration S] [--pulses N] [--capture OUT]\n"
           "      direct receiver vibration diagnostic; prints actual HID write results\n"
@@ -287,6 +289,7 @@ int SessionCommand(int argc, char** argv) {
     else if (a == "--only" && i + 1 < argc) options.replayOnly.push_back(argv[++i]);
     else if (a == "--trace" && i + 1 < argc) options.replayTracePath = argv[++i];
     else if (a == "--mixed-light") options.mixedLight.enabled = true;
+    else if (a == "--mixed-switch" && i + 1 < argc) options.replayMixedSwitch.push_back(std::atof(argv[++i]));
     else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
   }
   auto session = lh::Session::Create(options);

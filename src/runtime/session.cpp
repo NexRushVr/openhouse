@@ -533,6 +533,7 @@ void SessionImpl::ReplayMain() {
   std::set<uint16_t> skipped;  // endpoints of devices outside replayOnly
   std::FILE* trace = options_.replayTracePath.empty() ? nullptr : std::fopen(options_.replayTracePath.c_str(), "w");
   double nextTrace = 0;
+  size_t nextSwitch = 0;  // replayMixedSwitch
   const auto& only = options_.replayOnly;
   reader.ReadAll([&](const usb::EndpointInfo& e) {
                    if (!only.empty() && std::find(only.begin(), only.end(), e.serial) == only.end()) { skipped.insert(e.ep); return; }
@@ -555,6 +556,16 @@ void SessionImpl::ReplayMain() {
                    {
                      std::lock_guard lock(mutex_);
                      now_ = std::max(now_, r.hostTime);
+                   }
+                   if (nextSwitch < options_.replayMixedSwitch.size() && at >= options_.replayMixedSwitch[nextSwitch]) {
+                     ++nextSwitch;
+                     MixedLightOptions mixed;
+                     {
+                       std::lock_guard lock(mutex_);
+                       mixed = mixed_;
+                     }
+                     mixed.enabled = !mixed.enabled;
+                     SetMixedLight(mixed);
                    }
                    decoder.OnReport(r);
                    if (trace && !warming_ && r.hostTime >= nextTrace) {

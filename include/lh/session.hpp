@@ -229,6 +229,8 @@ struct SessionOptions {
   // 1.0 and 2.0 base stations together, from the start (SetMixedLight changes it). In a replay
   // it sorts the recorded LH1 pulses; the light modes are the recording's.
   MixedLightOptions mixedLight;
+  // Replay: capture times (s, as replayFrom) at which that switch flips, as it did live.
+  std::vector<double> replayMixedSwitch;
 };
 
 class Session {
