@@ -28,6 +28,8 @@
 #include "mixed_light.hpp"
 #include "room_map.hpp"
 #include "room_solver.hpp"
+#include "rotor_reference.hpp"
+#include "tracking/disambiguator_sob.hpp"
 #include "tracking/tracked_object.hpp"
 
 #ifdef LH_RUNTIME_USB
@@ -345,6 +347,7 @@ class SessionImpl final : public Session, public InputSinkBase {
   std::map<std::string, std::string> roles_;  // settings.json "roles": serial -> tracked_controller_role
   bool persist_ = false;
   MixedLightOptions mixed_;  // SetMixedLight
+  runtime::RotorReference rotorReference_;  // MixedLightOptions::rotorReference
   bool hideLost_ = false;    // settings.json "hideLostDevices"
   bool mixedActive_ = false;  // mixed_.enabled, and a 2.0 station to sort (UpdateMixedRoom)
   double mixedSince_ = 0;     // when mixedActive_ last changed
@@ -1055,6 +1058,12 @@ void SessionImpl::OnLh2BeamWord(const DeviceId& id, const Lh2BeamWord& word) {
     StartMixedLight(found->second);
   }
   found->second.tracker->OnLh2BeamWord(word);
+  // MixedLightOptions::rotorReference: what the word says of its rotor's timing, for the devices in LH1 mode.
+  Device& d = found->second;
+  if (mixedActive_ && mixed_.rotorReference && d.haveClock && word.channel >= 0 && word.channel < sob::kChannels)
+    if (const uint32_t base = d.tracker->Source().ChannelSerial(word.channel))
+      rotorReference_.OnWord(id, base, word.time, HostTime(d, word.time),
+                             double(sob::kPeriodTicks[size_t(word.channel)]) * sob::kTickSeconds);
 }
 
 void SessionImpl::OnLh2SensorWord(const DeviceId& id, const Lh2SensorWord& word) {
@@ -1598,7 +1607,8 @@ void SessionImpl::LoadSettings() {
     for (const auto& serial : j.value("disabledDevices", std::vector<std::string>{})) disabled_.insert(serial);
     if (j.contains("mixedLight")) {
       // 1.0 and 2.0 base stations together: true/false, or
-      // {"enabled": true, "controllers": true, "trackers": true, "scout": true, "preferLh2": false}. Under SteamVR the
+      // {"enabled": true, "controllers": true, "trackers": true, "scout": true, "preferLh2": false,
+      // "rotorReference": false}. Under SteamVR the
       // driver's settings page wins once it has values (this seeds them); Monado and WiVRn use this.
       const auto& m = j.at("mixedLight");
       MixedLightOptions o;
@@ -1615,6 +1625,7 @@ void SessionImpl::LoadSettings() {
         o.trackers = get("trackers", true);
         o.scout = get("scout", true);
         o.preferLh2 = get("preferLh2", false);
+        o.rotorReference = get("rotorReference", false);
       } else {
         throw std::runtime_error("mixedLight must be true, false or an object");
       }
@@ -1667,6 +1678,10 @@ void SessionImpl::StartMixedLight(Device& d) {
   d.tracker->Source().SetSorting(mixed_.enabled && !d.lh1Only, mixing);
   d.tracker->SetMixedLightScatter(mixing ? runtime::kSortedHitScatter : 0, mixing ? runtime::kLh1HitScatter : 0,
                                   mixing ? runtime::kRotorWobble : 0, runtime::kRotorWobbleMemory);
+  // MixedLightOptions::rotorReference (asked per frame, under the session's lock).
+  d.tracker->SetRotorReference([this, &d](uint32_t base, double deviceTime, double* radians) {
+    return mixedActive_ && mixed_.rotorReference && d.haveClock && rotorReference_.Offset(base, HostTime(d, deviceTime), radians);
+  });
   if (mixing) d.lightMode = -1;
 }
 
@@ -1744,7 +1759,8 @@ void SessionImpl::SetMixedLight(const MixedLightOptions& options) {
   auto onOff = [](bool on) { return on ? "on" : "off"; };
   Emit(SessionEventType::Log, "", std::string("1.0 + 2.0 base stations together: switch ") + onOff(options.enabled) + " (controllers " +
                                   onOff(options.controllers) + ", trackers " + onOff(options.trackers) + ", scout " +
-                                  onOff(options.scout) + ", LH2 mode preferred " + onOff(options.preferLh2) + ")",
+                                  onOff(options.scout) + ", LH2 mode preferred " + onOff(options.preferLh2) + ", rotor reference " +
+                                  onOff(options.rotorReference) + ")",
                                   LogLevel::Info);
   UpdateMixedRoom();
   if (switched)  // learning rotors starts or stops, in use or not

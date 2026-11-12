@@ -167,7 +167,35 @@ void DeviceTracker::DropForeignSweeps(OpticalFrame* f) {
   foreignSweepSamples_ += dropped;
 }
 
-void DeviceTracker::HandleFrame(const OpticalFrame& original) {
+void DeviceTracker::HandleFrame(const OpticalFrame& incoming) {
+  // Not stock (runtime/rotor_reference.hpp): sorted 2.0 hits less their rotor's offset, where a device in
+  // LH2 mode measures it at that moment.
+  OpticalFrame referenced;
+  const OpticalFrame* in = &incoming;
+  if (incoming.baseSerial &&
+      std::any_of(incoming.samples.begin(), incoming.samples.end(), [](const OpticalSample& s) { return (s.flags2 & kSampleSorted) != 0; })) {
+    ++sortedFrames_;
+    double time = std::numeric_limits<double>::infinity();
+    for (const auto& s : incoming.samples) time = std::min(time, s.time + 0.5 * s.width);
+    double radians = 0;
+    if (rotorOffset_ && rotorOffset_(incoming.baseSerial, time, &radians)) {
+      referenced = incoming;
+      for (auto& s : referenced.samples)
+        if (s.flags2 & kSampleSorted) {
+          s.angle -= radians;
+          s.flags2 |= kSampleReferenced;
+        }
+      in = &referenced;
+      ++referencedFrames_;
+    }
+    if (sortedFrames_ % 6000 == 0 && referencedFrames_ > 0) {
+      char text[112];
+      std::snprintf(text, sizeof text, "rotor reference: %.0f %% of %llu frames of sorted hits corrected so far",
+                    100.0 * double(referencedFrames_) / double(sortedFrames_), static_cast<unsigned long long>(sortedFrames_));
+      Log(text);
+    }
+  }
+  const OpticalFrame& original = *in;
   // A 1.0 frame (only those have a sync width class) while 2.0 light is about: 2.0 sweeps out first, while
   // the device turns slowly enough for its pose to judge them (runtime::kSweepMaxTurn).
   OpticalFrame checked;

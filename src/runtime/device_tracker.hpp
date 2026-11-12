@@ -16,6 +16,7 @@
 
 #include <Eigen/Geometry>
 #include <deque>
+#include <functional>
 #include <map>
 #include <set>
 #include <memory>
@@ -80,6 +81,13 @@ class DeviceTracker {
   // while 2.0 light is about. ForeignSweepSamples: how many samples that dropped.
   void SetLh1SweepCheck(bool on) { lh1SweepCheck_ = on; }
   uint64_t ForeignSweepSamples() const { return foreignSweepSamples_; }
+  // Not stock (runtime/rotor_reference.hpp): a 2.0 rotor's offset at a moment on this device's clock, as
+  // the devices in LH2 mode measure it (rad), taken off this device's sorted hits of it; false: none does.
+  using RotorOffset = std::function<bool(uint32_t base, double deviceTime, double* radians)>;
+  void SetRotorReference(RotorOffset offset) { rotorOffset_ = std::move(offset); }
+  // Frames of sorted hits so far, and of those the ones the rotor reference corrected.
+  uint64_t SortedFrames() const { return sortedFrames_; }
+  uint64_t ReferencedFrames() const { return referencedFrames_; }
   DeviceTracker(std::string id, TrackedObjectModel model, RoomMap* room);
 
   void OnBaseConfig(const BaseConfig&, const BaseDynamicState&);
@@ -152,6 +160,8 @@ class DeviceTracker {
   bool lh1Keyframes_ = true;  // SetLh1Keyframes
   bool lh1SweepCheck_ = false;  // SetLh1SweepCheck
   uint64_t foreignSweepSamples_ = 0;
+  RotorOffset rotorOffset_;  // SetRotorReference
+  uint64_t sortedFrames_ = 0, referencedFrames_ = 0;
   std::map<uint32_t, double> lastFrame_;  // last sweep time per base
   std::optional<double> preferLocatedSince_;
   uint64_t framesHandled_ = 0;

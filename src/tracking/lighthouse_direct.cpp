@@ -391,11 +391,18 @@ bool LighthouseDirect::Bootstrap(const OpticalFrame& frame, const BaseConfig& ba
 // Knuckles) to 0.16, 0.11, 0.12 with both, 0.17, 0.12, 0.12 without the shared scatter, 0.24, 0.22, 0.21
 // with it alone.
 void LighthouseDirect::FollowRotorWobble(uint32_t serial, double time, const std::vector<Residual>& residuals,
-                                         const std::vector<bool>& sorted, std::vector<double>* z, const Mat& R) {
+                                         const std::vector<bool>& sorted, bool referenced, std::vector<double>* z, const Mat& R) {
   std::vector<int> rows;
   for (size_t i = 0; i < sorted.size(); ++i)
     if (sorted[i]) rows.push_back(int(i));
   if (rows.empty()) return;
+  // The rotor's wobble already taken off by a device in LH2 mode (kSampleReferenced): nothing to follow. Followed
+  // as well, a 2018 tracker lying still had 0.37 mm of still jitter against 0.23 not (0.27 before either), with a
+  // follower of their own for such frames too. It starts over where the reference ends.
+  if (referenced) {
+    wobbles_.erase(serial);
+    return;
+  }
   RotorWobble& wobble = wobbles_[serial];
   wobble.Predict(time, wobbleSpread_, wobbleMemory_);
   const int n = filter_.n;
@@ -442,6 +449,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
   std::vector<Residual> residuals;
   std::vector<double> z, facing;
   std::vector<bool> sorted;
+  bool referenced = false;  // FollowRotorWobble
   for (const auto& s : samples) {
     const int idx = model_.IndexOf(s.sensor);
     const auto point = model_.points[size_t(idx)], normal = model_.normals[size_t(idx)];
@@ -458,6 +466,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
       [=](const Jet* x, Jet* r) { r[0] = SensorAngular(x, offset, point.data(), s.axis, cal.data(), alt, baseModel); }});
     z.push_back(s.angle); facing.push_back(cos);
     sorted.push_back((s.flags2 & kSampleSorted) != 0);
+    referenced |= (s.flags2 & kSampleReferenced) != 0;
   }
   // 0x36f740: when every sample fails the facing cutoff it skips the update but
   // still returns PredictTo's result (true); x, P and time are left untouched.
@@ -492,7 +501,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
     }
   }
   R(m - 1, m - 1) = 1e-8;
-  if (wobbleSpread_ > 0) FollowRotorWobble(base.serial, time, residuals, sorted, &z, R);
+  if (wobbleSpread_ > 0) FollowRotorWobble(base.serial, time, residuals, sorted, referenced, &z, R);
   // Not stock: right after a reseed (reacquired with a carried calibration, so already
   // at 201 updates) the other bases' light isn't frame-gated: it is what corrects the
   // new pose, and gated, the device tracked from one base on a pose the others never fit

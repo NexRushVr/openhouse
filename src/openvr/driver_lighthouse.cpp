@@ -1405,6 +1405,7 @@ class Provider : public IServerTrackedDeviceProvider {
       mixed.trackers = flag("mixedLightTrackers", file.trackers);
       mixed.scout = flag("mixedLightScout", file.scout);
       mixed.preferLh2 = flag("mixedLightPreferLh2", file.preferLh2);    // the same
+      mixed.rotorReference = flag("mixedLightRotorReference", file.rotorReference);  // the same
       session_->SetMixedLight(mixed);
       g_hideLost = flag("hideLostDevices", session_->HideLostDevices());
     } else {

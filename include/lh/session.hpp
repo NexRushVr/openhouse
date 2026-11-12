@@ -193,6 +193,10 @@ struct MixedLightOptions {
   // stations (LH1 mode) only while they don't. In LH2 mode a hit carries its own angle, and a tracker
   // lying still swayed a third as much (runtime/mixed_light.hpp, Lh2LightEnough).
   bool preferLh2 = false;
+  // On (a test): the devices in LH2 mode (the headset, mostly) measure each 2.0 rotor's timing wobble from
+  // its beam words, and the devices in LH1 mode take it off their sorted hits of that rotor
+  // (runtime/rotor_reference.hpp). It's the station's own, the same for every device that sees it.
+  bool rotorReference = false;
   bool operator==(const MixedLightOptions&) const = default;
 };
 

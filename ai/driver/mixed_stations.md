@@ -196,6 +196,55 @@ pose is refused after 1 s and none is shown until the 2.0 light is back. Which i
 known (it was moving at 0.5-1 m/s). Lying still: the 2018 tracker's losses 2 to 1, the 3.0 tracker's 3 to 2
 and good pose 99.7 to 99.9 %, its still jitter 0.17 to 0.20 mm (not looked into).
 
+**The rotor's wobble, measured in LH2 mode** (`MixedLightOptions::rotorReference`, "the headset measures the 2.0
+stations' timing wobble for the other devices", a test, off; `runtime/rotor_reference.hpp`; replay
+`--mixed-rotor-reference`). Measured in replays of four recordings of 2026-11-11 (debug dumps of every beam word
+and every frame's raw angles, not kept):
+
+- The wobble is the station's own. Two devices in LH2 mode on one rotor at once saw the same (r 1.00, 0.005 mrad
+  apart against 0.08-0.09 mrad), so it isn't the devices' clocks.
+- It can't be told from its own past: an AR(10) on 20 ms steps predicts 80 % of it 20 ms ahead, 25 % at 60 ms,
+  5-10 % at 120 ms (AR(1) time 0.11-0.15 s; 1-8 Hz much alike).
+- Devices lying still in LH1 mode, raw angles (off each sensor's median): a frame's sorted hits had 0.07-0.09 mrad
+  in common, and the headset's beam words for that rotor at that moment explained it (r 0.90-0.97, slope
+  0.89-1.00, the 2018 tracker too), leaving 0.017-0.032 mrad, as LH2 words' 0.018-0.021.
+- The follower doesn't follow it: its estimate went with the headset's r 0.1-0.56, as a frame's offset against
+  the predicted pose does, most of which is the pose. Its spread and memory set to the measured wobble's (0.09 or
+  0.15 mrad, 0.13 s) made still jitter worse everywhere (Knuckles 0.13 to 0.16-0.18 mm, a 3.0 tracker 0.08 to
+  0.11-0.14, the 2018 tracker 0.27 to 0.36).
+- The headset had the rotor in view for 64-93 % of the trackers' sorted frames, per recording (9-99 % per rotor);
+  other devices in LH2 mode add 0-5 %. Beam words reach the session 10 ms after they're sent (p99 20 ms), and a
+  revolution's word comes before its hits, so a frame needn't wait for it.
+
+So each device in LH2 mode measures every rotor it sees against that rotor's line over the last 5 s, word by word
+(`RotorReference`, on the session's clock through each device's clock offset), and a device in LH1 mode takes
+the offset at a frame's time (between two words, or within 30 ms of one) off that frame's sorted hits
+(`DeviceTracker::HandleFrame`, `kSampleReferenced`). The follower leaves such frames alone. Replays without it and
+with it, still jitter in LH1 mode (filter, median, mm):
+
+| | 14:41 | 16:46 | 13:02 |
+|---|---|---|---|
+| 2018 tracker | 0.27 to 0.23 | 0.31 to 0.27 | 0.16 to 0.12 |
+| 3.0 tracker | 0.20 to 0.15 | 0.08 to 0.05 | 0.22 to 0.22 |
+| Knuckles | 0.13, 0.12 to 0.11, 0.10 | 0.13, 0.15 to 0.11, 0.10 | |
+
+In 09:47 and the shake recording jitter and losses didn't change. LH2 mode is 0.05-0.06 mm for Knuckles, so most
+of what's left isn't the wobble; not looked into. What it cost: at 14:41 the 2018 tracker was lost 3 times
+against once (its IMU calibration ran off 3.6 s after it reacquired, and it reacquired once after coasting where
+before it came back), good pose 100.0 to 99.9 %, its largest step at a change of light mode 27 to 74 mm; at 13:02
+the 3.0 tracker jumped 9.0 times a minute against 7.2 (good pose 79.4 to 79.8 %); at 09:47 the 3.0 tracker's
+largest step at a change of light mode 15 to 53 mm. The 2018 tracker's 14:41 counts swing with any small change
+(above), and so they did here:
+
+- The follower on corrected frames as well (its own state for them or not): the 2018 tracker 0.37 mm at 14:41,
+  lost twice; the others between the two.
+- Corrected hits weighted less loosely than sorted ones (0.5, 0.2, 0 us for 1 us): Knuckles 0.09-0.10 mm, the
+  2018 tracker 0.23, 0.20, 0.17 mm at 16:46, but at 14:41 lost 2, 3 and 6 times. Left at 1 us.
+- No correction in a device's first 800 updates: the 2018 tracker 0.35 mm at 14:41 and lost twice.
+
+Logged every 6000 frames of sorted hits per device: "rotor reference: N % of M frames of sorted hits corrected
+so far" (72-100 % in these replays). Not tried live.
+
 **LH2 mode while the 2.0 light is enough** (`MixedLightOptions::preferLh2`, "use the 1.0 stations only while
 the 2.0 stations don't light a device well", a test, off; `runtime::ChooseMixedLight`). A replay
 can't show it (its modes are the recording's): unit tests only. LH2 mode has no wobble, so the surest way
