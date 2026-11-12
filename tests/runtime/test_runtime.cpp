@@ -1236,3 +1236,36 @@ TEST(MixedLight, ABadValueLeavesItOff) {
 TEST(MixedLight, TheCommandLineWins) {
   EXPECT_TRUE(MixedFromSettings(R"({"mixedLight": false})", true).enabled);
 }
+
+// #86: a room learned before device model scales were applied (no "modelScale") keeps its
+// bases, unlocked and less certain, once: the solver refines them in the same room.
+TEST(RoomMap, RoomLearnedWithoutModelScalesIsRefinedOnce) {
+  const auto path = (std::filesystem::temp_directory_path() / ("lh-test-scale-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
+  {
+    std::ofstream f(path);
+    f << R"({"rooms": [{"id": "room-1", "source": "lh", "updated": 1, "bases": [
+          {"serial": 1, "origin": true, "observations": 0, "positionVariance": 0, "rotationVariance": 0,
+           "pose": {"position": [0, 0, 0], "orientation": [1, 0, 0, 0]}},
+          {"serial": 2, "observations": 500, "positionVariance": 1e-6, "rotationVariance": 1e-7,
+           "pose": {"position": [3, 0.5, -2], "orientation": [1, 0, 0, 0]}}]}]})";
+  }
+  RoomMap room;
+  ASSERT_TRUE(room.Load(path));
+  room.OnBaseSeen(Config(1), {});
+  room.OnBaseSeen(Config(2), {});
+  ASSERT_NE(room.Base(2), nullptr);
+  EXPECT_FALSE(RoomMap::Locked(*room.Base(2)));
+  EXPECT_GE(room.Base(2)->positionVariance, 3e-4);
+  EXPECT_NEAR(room.Base(2)->worldFromBase.translation().x(), 3, 1e-9);  // kept, not reset
+  EXPECT_TRUE(room.Base(1)->origin);
+  bool said = false;
+  for (const auto& line : room.TakeLogs()) said |= line.find("model scales") != std::string::npos;
+  EXPECT_TRUE(said);
+  ASSERT_TRUE(room.Save(path));
+  std::ifstream in(path);
+  EXPECT_EQ(nlohmann::json::parse(in).at("rooms")[0].at("modelScale"), lh::runtime::Room::kModelScale);
+  RoomMap again;
+  ASSERT_TRUE(again.Load(path));
+  std::filesystem::remove(path);
+  for (const auto& line : again.TakeLogs()) EXPECT_EQ(line.find("model scales"), std::string::npos);
+}

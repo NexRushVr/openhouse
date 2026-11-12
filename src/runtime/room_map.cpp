@@ -105,6 +105,25 @@ bool RoomMap::Load(const std::string& path, std::string* error) {
         if (b.contains("resetCount")) base.resetCount = b.at("resetCount").get<int>();
         room.bases[base.serial] = base;
       }
+      // Learned with other device model scales (1.0.2 and before applied none: a Vive headset
+      // 0.4 % small): its bases are off by up to a centimetre or so, and locked there. They're
+      // kept, with the weight of a short session and 1 cm of uncertainty, unlocked: the room
+      // solver places them again from this session's keyframes, gliding, in the same room
+      // (same universe, same Room Setup), instead of fighting every device's light.
+      room.modelScale = r.value("modelScale", 0);
+      if (room.modelScale != Room::kModelScale) {
+        constexpr int kEvidence = 30;
+        for (auto& [serial, base] : room.bases) {
+          if (base.origin) continue;
+          base.observations = std::min(base.observations, kEvidence);
+          base.storedObservations = base.observations;
+          base.positionVariance = std::max(base.positionVariance, 3 * 0.01 * 0.01);
+          base.rotationVariance = std::max(base.rotationVariance, 3 * 0.003 * 0.003);
+        }
+        if (room.modelScale == 0 && !room.bases.empty())
+          Log("Room " + room.id + " was learned without the devices' model scales; refining its bases again");
+        room.modelScale = Room::kModelScale;
+      }
       rooms.push_back(std::move(room));
     }
     std::map<uint32_t, std::pair<BaseConfig, BaseDynamicState>> configs;
@@ -161,7 +180,7 @@ bool RoomMap::Save(const std::string& path, std::string* error) const {
         if (b.resetCount) jb["resetCount"] = *b.resetCount;
         bases.push_back(jb);
       }
-      rooms.push_back({{"id", room.id}, {"source", room.source}, {"updated", room.updated}, {"bases", bases}});
+      rooms.push_back({{"id", room.id}, {"source", room.source}, {"updated", room.updated}, {"modelScale", room.modelScale}, {"bases", bases}});
     }
     json configs = json::array();
     for (const auto& [serial, c] : configs_) {
