@@ -112,6 +112,28 @@ as far from where the pose puts it as LH2 words do, per hit in the frames the fi
 0.5 mrad more for a 1.0 hit brought it near LH2 mode's. Weighting one kind alone didn't help: the other
 then counted for more.
 
+**The rotor's wobble** (`tracking/rotor_wobble.hpp`, `LighthouseDirect::FollowRotorWobble`, while in use).
+Trackers lying still (2026-11-11, a 2018 and a 3.0 tracker, two 1.0 and three 2.0 stations) swayed 0.22-0.41 mm
+rms in LH1 mode against 0.07-0.12 mm in LH2 mode, nearly all of it below 5 Hz (a 2-3 Hz sway of up to 1 mm),
+whatever the weights: the light itself moves. A sorted hit's angle is its time since a beam word predicted
+from the rotor's line, and the rotor doesn't keep to a line. Real beam words (any device in LH2 mode, every
+rotor) sit 0.25-0.3 us rms off a line through the last 5 s, 0.09 mrad, smoothly over several revolutions
+(0.11 us between one and the next; most of it at 1-8 Hz). An LH2 word carries its own angle, so LH2 mode has
+none of this. In LH1 mode both planes' hits are off by the same angle: frames' means wandered 0.09-0.17 mrad
+(the two planes of a rotor alike, r = 0.96; two rotors apart, r = 0.2) while the sensors within a frame kept
+to 0.02-0.07 mrad of one another, as LH2 words do. The headset's real words for the same rotor explain part
+of it (slope 0.94-1.0, r = 0.6: 0.127 to 0.101 mrad), so more than the rotor is in it. A 1.0 station's frames
+don't wander (0.02-0.03 mrad). So each rotor's offset is followed from what a frame's sorted hits have in
+common against the pose, as far as the pose is known better than the offset (0.3 mrad, fading over 0.2 s),
+and comes off the hits before the filter takes them; what's unsure of it stays on them as scatter they
+share. A pose just reacquired or swinging is unsure, and the light then corrects it as before. Replayed
+(still jitter, median rms over 0.5 s, four stretches): the 3.0 tracker 0.38, 0.22, 0.28, 0.27 mm to 0.25,
+0.44, 0.12, 0.12; the 2018 tracker 0.41, 0.27, 0.37, 0.33 to 0.37, 0.27, 0.30, 0.26. Moving, the output
+is within 1.3 ms of before (the shift that best explains the difference, at 0.3-3 m/s). What it can't do:
+the pose still has to come from somewhere, and with the wobble out the rest of the light (the planes'
+difference, the frame's shape, the 1.0 stations) holds it less firmly than LH2 words would. Passing the
+headset's wobble to the others (it hears the real words) would take out about a fifth more; not built.
+
 **lhbs multi-station** auto-detection waits while sorting (`TrackingSource::UseMulti`), as it was off
 (`LH_MULTISTATION=off`) for every test here. The room's lone stock 1.0 station (channel A, no cable) tripped
 it even with the 2.0 stations off: "multi-station layout detected (0 multi / 0 stock flash pairs)", through

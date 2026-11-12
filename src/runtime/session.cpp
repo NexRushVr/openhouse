@@ -1648,7 +1648,8 @@ void SessionImpl::StartMixedLight(Device& d) {
   // With the switch on, rotors are learned from LH2 words even before it's in use, so they're ready
   // when it is; in a 1.0-only room there are none.
   d.tracker->Source().SetSorting(mixed_.enabled && !d.lh1Only, mixing);
-  d.tracker->SetMixedLightScatter(mixing ? runtime::kSortedHitScatter : 0, mixing ? runtime::kLh1HitScatter : 0);
+  d.tracker->SetMixedLightScatter(mixing ? runtime::kSortedHitScatter : 0, mixing ? runtime::kLh1HitScatter : 0,
+                                  mixing ? runtime::kRotorWobble : 0, runtime::kRotorWobbleMemory);
   if (mixing) d.lightMode = -1;
 }
 

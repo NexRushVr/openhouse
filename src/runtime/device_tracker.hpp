@@ -12,6 +12,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 
 #include <Eigen/Geometry>
 #include <deque>
@@ -68,9 +69,9 @@ class DeviceTracker {
     smoothRotation_ = std::max(0.0, rotation);
   }
   // LighthouseDirect::SetMixedLightScatter, kept for every filter this tracker starts.
-  void SetMixedLightScatter(double sortedSeconds, double lh1Radians) {
-    mixedScatter_ = {sortedSeconds, lh1Radians};
-    filter_->SetMixedLightScatter(sortedSeconds, lh1Radians);
+  void SetMixedLightScatter(double sortedSeconds, double lh1Radians, double wobbleRadians = 0, double wobbleSeconds = 0) {
+    mixedScatter_ = {sortedSeconds, lh1Radians, wobbleRadians, wobbleSeconds};
+    filter_->SetMixedLightScatter(sortedSeconds, lh1Radians, wobbleRadians, wobbleSeconds);
   }
   // Whether LH1 frames may go into keyframes (runtime::Lh1KeyframesUsable): off while their light may hold
   // 2.0 sweeps this device can't sort.
@@ -122,7 +123,7 @@ class DeviceTracker {
   RoomMap* room_;
   TrackingSource source_;
   std::unique_ptr<LighthouseDirect> filter_;
-  std::pair<double, double> mixedScatter_{0, 0};  // SetMixedLightScatter
+  std::array<double, 4> mixedScatter_{};  // SetMixedLightScatter
   std::map<uint32_t, std::pair<BaseConfig, BaseDynamicState>> bases_;
   std::optional<direct::DirectFilter> carry_;  // calibrated filter from the last track
   // The calibration as of the last calm, well-lit moment (no violent motion, light

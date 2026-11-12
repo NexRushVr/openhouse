@@ -11,6 +11,7 @@
 
 #include "lh/tracker.hpp"
 #include "direct_filter.hpp"
+#include "rotor_wobble.hpp"
 #include "sample_history.hpp"
 #include "tracked_object.hpp"
 
@@ -35,9 +36,14 @@ class LighthouseDirect {
   // sits about twice as far from the pose as an LH2 word, and weighted as one it shakes the pose.
   // sortedSeconds: added to the timing scatter of a 2.0 hit picked out of LH1 pulses
   // (kSampleSorted); lh1Radians: to the angle scatter of a 1.0 station's hit.
-  void SetMixedLightScatter(double sortedSeconds, double lh1Radians) {
+  // wobbleRadians: how far a 2.0 rotor's sorted hits wander off the pose all alike, which is followed
+  // per rotor and taken out of them (rotor_wobble.hpp), over wobbleSeconds; 0: not followed.
+  void SetMixedLightScatter(double sortedSeconds, double lh1Radians, double wobbleRadians = 0, double wobbleSeconds = 0) {
     sortedScatter_ = sortedSeconds;
     lh1Scatter_ = lh1Radians;
+    wobbleSpread_ = wobbleSeconds > 0 ? wobbleRadians : 0;
+    wobbleMemory_ = wobbleSeconds;
+    if (wobbleSpread_ <= 0) wobbles_.clear();
   }
   void OnBaseConfig(const BaseConfig&, const BaseDynamicState&);
   void SetRecordedTilt(uint32_t serial, std::array<double, 2> tilt, double variance);
@@ -132,6 +138,8 @@ class LighthouseDirect {
   double BaseDistance(const double* state, int slot) const;
   std::vector<OpticalSample> Gather(const std::vector<OpticalSample>&) const;
   void FilterOutliers(std::vector<OpticalSample>* samples, double distance) const;
+  void FollowRotorWobble(uint32_t serial, double time, const std::vector<direct::Residual>& residuals,
+                         const std::vector<bool>& sorted, std::vector<double>* z, direct::Mat* R);
 
   TrackedObjectModel model_;
   direct::DirectFilter filter_;
@@ -156,6 +164,8 @@ class LighthouseDirect {
   uint64_t altGateUntil_ = 0;  // after a reseed: the other bases' light isn't frame-gated before this
   double lastWellLit_ = -1e300;  // the last frame of four sensors or more that was used
   double sortedScatter_ = 0, lh1Scatter_ = 0;  // SetMixedLightScatter
+  double wobbleSpread_ = 0, wobbleMemory_ = 0;
+  std::map<uint32_t, direct::RotorWobble> wobbles_;  // per 2.0 station (FollowRotorWobble)
   // ExpectedHits: the state carried forward, kept for a moment since it's asked per pulse.
   mutable double expectedState_[direct::kStateSize] = {};
   mutable double expectedTime_ = 0, expectedFilterTime_ = -1;

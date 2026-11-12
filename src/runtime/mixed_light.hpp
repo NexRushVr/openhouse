@@ -36,6 +36,12 @@ constexpr double kVisitEvery = 45, kScoutedVisitEvery = 90;
 // LH2 mode's jitter; these brought it near LH2 mode's, with no lag.
 constexpr double kSortedHitScatter = 1e-6;    // s, of a sorted 2.0 hit's timing
 constexpr double kLh1HitScatter = 0.5e-3;     // rad, of a 1.0 station's angle
+// A 2.0 rotor's sorted hits are off all alike, wandering over a few tenths of a second
+// (tracking/rotor_wobble.hpp): the rotor's real beam words sit 0.25-0.3 us rms (0.09 mrad) off its line,
+// and on a tracker lying still a frame's hits were off together by 0.09-0.17 mrad. Followed per rotor and
+// taken out, as far as the pose is known better: this far it may be off, and this long it lasts.
+constexpr double kRotorWobble = 0.3e-3;       // rad
+constexpr double kRotorWobbleMemory = 0.2;    // s
 
 // Whether a device of this kind reads both kinds of base station.
 bool MixesLight(DeviceRole role, const MixedLightOptions& options);

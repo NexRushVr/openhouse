@@ -376,6 +376,53 @@ bool LighthouseDirect::Bootstrap(const OpticalFrame& frame, const BaseConfig& ba
   return true;
 }
 
+// Not stock (rotor_wobble.hpp): what a frame's sorted hits have in common against the predicted state goes
+// to their rotor's wobble, as far as the state is known better than the wobble, and comes off the hits. What
+// is left unsure of it stays on them as scatter they share. z and R are the update's, R already filled in.
+void LighthouseDirect::FollowRotorWobble(uint32_t serial, double time, const std::vector<Residual>& residuals,
+                                         const std::vector<bool>& sorted, std::vector<double>* z, Mat* R) {
+  constexpr double kOutlier = 0.5e-3;  // rad from the frame's median: another station's hit, a reflection
+  std::vector<int> rows;
+  for (size_t i = 0; i < sorted.size(); ++i)
+    if (sorted[i]) rows.push_back(int(i));
+  if (rows.empty()) return;
+  RotorWobble& wobble = wobbles_[serial];
+  wobble.Predict(time, wobbleSpread_, wobbleMemory_);
+  const int n = filter_.n;
+  Jet state[kStateSize];
+  for (int i = 0; i < kStateSize; ++i) state[i] = Jet(filter_.xLin[i], i);
+  std::vector<double> off(rows.size());
+  std::vector<Eigen::RowVectorXd> jacobian(rows.size());
+  for (size_t k = 0; k < rows.size(); ++k) {
+    Jet predicted;
+    residuals[size_t(rows[k])].evalJet(state, &predicted);
+    off[k] = (*z)[size_t(rows[k])] - predicted.a;
+    jacobian[k] = predicted.v.head(n).transpose();
+  }
+  std::vector<double> ordered = off;
+  std::nth_element(ordered.begin(), ordered.begin() + std::ptrdiff_t(ordered.size() / 2), ordered.end());
+  const double median = ordered[ordered.size() / 2];
+  Eigen::RowVectorXd mean = Eigen::RowVectorXd::Zero(n);
+  double sum = 0, scatter = 0;
+  int used = 0;
+  for (size_t k = 0; k < rows.size(); ++k) {
+    if (std::fabs(off[k] - median) > kOutlier) continue;
+    sum += off[k];
+    mean += jacobian[k];
+    scatter += (*R)(rows[k], rows[k]);
+    ++used;
+  }
+  if (used >= 2) {  // one hit says nothing about what its frame has in common
+    mean /= used;
+    const double pose = (mean * filter_.Ppred.topLeftCorner(n, n) * mean.transpose())(0, 0);
+    wobble.Update(sum / used, pose, scatter / (double(used) * used));
+  }
+  for (const int i : rows) {
+    (*z)[size_t(i)] -= wobble.value;
+    for (const int j : rows) (*R)(i, j) += wobble.variance;
+  }
+}
+
 bool LighthouseDirect::OpticalUpdate(const OpticalFrame& frame, const BaseConfig& base, int slot) {
   return ApplyOpticalResiduals(frame, base, slot);
 }
@@ -442,6 +489,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
     }
   }
   R(m - 1, m - 1) = 1e-8;
+  if (wobbleSpread_ > 0) FollowRotorWobble(base.serial, time, residuals, sorted, &z, &R);
   // Not stock: right after a reseed (reacquired with a carried calibration, so already
   // at 201 updates) the other bases' light isn't frame-gated: it is what corrects the
   // new pose, and gated, the device tracked from one base on a pose the others never fit
