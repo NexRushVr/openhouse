@@ -462,6 +462,13 @@ std::vector<UsbTransport::Receiver> UsbTransport::Receivers() const {
   return out;
 }
 
+void UsbTransport::OnDeviceGone(const DeviceId& serial) {
+  std::lock_guard lock(receiversMutex_);
+  for (auto& [id, r] : receivers_) {
+    if (r.connected == serial) r.connected.clear();
+  }
+}
+
 bool UsbTransport::SetPairing(const std::string& receiver, int milliseconds) {
   {
     std::lock_guard lock(receiversMutex_);
