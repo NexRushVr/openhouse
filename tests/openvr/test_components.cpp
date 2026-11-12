@@ -530,6 +530,7 @@ TEST(SteamRooms, WritesOurUniverseAndLeavesSteamVRsAlone) {
 
   std::ifstream in(path);
   const auto j = nlohmann::json::parse(in);
+  in.close();  // Windows can't remove an open file
   ASSERT_EQ(j.at("known_universes").size(), 2u);
   EXPECT_EQ(j.at("known_universes")[0], nlohmann::json::parse(steamUniverse));
   EXPECT_EQ(j.at("revision"), 6);
