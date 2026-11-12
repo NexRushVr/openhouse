@@ -86,11 +86,17 @@ MixedLightStep ChooseMixedLight(const MixedLightView& v, double visitEvery) {
       const bool done = v.learningRotors == 0 && v.unnamedRotors == 0 && posed;
       // preferLh2: its rotors known, it stays while the 2.0 stations light it well, and leaves for the 1.0
       // light when none does, or when it has lost tracking on the 2.0 light alone.
-      if (v.preferLh2 && !noLh2Pose && v.inMode >= kMinVisit && v.learningRotors == 0 && v.unnamedRotors == 0) {
-        if (v.tracking && v.lh2Short >= kPreferShort) return {0, "too little 2.0 light"};
-        if (!v.tracking && v.lost >= kLostBeforeHelp) return {0, "lost on 2.0 light"};
-        if (v.dark >= kVisitDark) return {0, "no 2.0 light"};
-        return resend ? MixedLightStep{1, "re-send"} : MixedLightStep{};
+      if (v.preferLh2 && !noLh2Pose && v.inMode >= kMinVisit) {
+        if (v.learningRotors == 0 && v.unnamedRotors == 0) {
+          if (v.tracking && v.lh2Short >= kPreferShort) return {0, "too little 2.0 light"};
+          if (!v.tracking && v.lost >= kLostBeforeHelp) return {0, "lost on 2.0 light"};
+          if (v.dark >= kVisitDark) return {0, "no 2.0 light"};
+          return resend ? MixedLightStep{1, "re-send"} : MixedLightStep{};
+        }
+        // A rotor learning, or a station being named, while the 2.0 light is enough: that's done here, where
+        // a visit's time limit (below) sent the device off at once, long past it (live 2026-11-11: 3 times in
+        // 3 min, "visit over" 27-87 s in). Short of light, the visit's rules decide as before.
+        if (v.tracking && v.lh2Short < kPreferShort) return resend ? MixedLightStep{1, "re-send"} : MixedLightStep{};
       }
       if (done && v.inMode >= kMinVisit) return {0, "rotors ready"};
       if (v.inMode >= kMinVisit && v.dark >= kVisitDark) return {0, "no 2.0 light"};

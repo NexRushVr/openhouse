@@ -155,7 +155,9 @@ The rule asked for one station to light 4 sensors a frame, and Knuckles lit 3-4 
 two stations fell short of it while tracking 93-97 % of the time: they left after 2.6-11 s and waited 20 s
 to come back. Now the stations count together (`runtime::Lh2LightEnough`: 80 sensor hits in 0.5 s, from
 stations seen in 10 frames with 3 sensors a frame); in the replay it held for 98-100 % of the time each
-device was tracking, against 83-99 %, and kept all 9 stretches in LH2 mode where 3 had left.
+device was tracking, against 83-99 %, and kept all 9 stretches in LH2 mode where 3 had left. Three more
+stretches ended "visit over" 27-87 s in: a rotor heard again ("learning 1") put the device back under a visit's
+time limit, long past. While the 2.0 light is enough it now stays and learns the rotor there.
 
 **Losses on going to LH2 mode** (live 2026-11-11, preferLh2 test): 6 of 29 visits and 6 of 16 switches
 for enough 2.0 light lost the device for 0.1-1.2 s, "light keeps arriving but none fits the pose: reacquiring"

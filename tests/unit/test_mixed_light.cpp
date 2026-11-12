@@ -142,6 +142,28 @@ TEST(MixedLight, PreferringLh2LeavesWhenThe2Point0LightRunsShort) {
   EXPECT_EQ(Mode(v), -1);  // and to learn one
 }
 
+TEST(MixedLight, PreferringLh2StaysWhileARotorRelearns) {
+  MixedLightView v = InLh2(87.0);
+  v.preferLh2 = true;
+  v.lh2Covered = 87.0;
+  v.learningRotors = 1;
+  EXPECT_EQ(Mode(v), -1);  // the light is enough: it's learned here
+  v.learningRotors = 0;
+  v.unnamedRotors = 1;
+  EXPECT_EQ(Mode(v), -1);  // and a station named
+  v.lh2Covered = 0;
+  v.lh2Short = 0.25;
+  const MixedLightStep step = ChooseMixedLight(v, kVisits);
+  EXPECT_EQ(step.mode, 0);  // short of light: a visit's limits, as without preferLh2
+  EXPECT_EQ(std::string(step.why), "visit over");
+  v.unnamedRotors = 0;
+  v.learningRotors = 1;
+  v.lh2Covered = 87.0;
+  v.lh2Short = 0;
+  v.preferLh2 = false;
+  EXPECT_EQ(std::string(ChooseMixedLight(v, kVisits).why), "visit over");
+}
+
 TEST(MixedLight, PreferringLh2LeavesWhenLostOnThe2Point0LightAlone) {
   MixedLightView v = InLh2(600.0);
   v.preferLh2 = true;
