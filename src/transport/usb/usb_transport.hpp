@@ -149,6 +149,13 @@ class UsbTransport {
     std::string path;      // hidapi path, unique while plugged in
     bool bluetooth = false;  // receiver's radio in Bluetooth mode: no device can connect
     int keepalive = -1;      // last keepalive to a receiver with no device: 1 sent, 0 failed, -1 none yet
+    // A receiver can stay plugged in while another device paired to it connects (#92): its first
+    // data after a disconnect or a radio gap is checked against the device it was set up for
+    // (OtherDeviceConnected). lastData: host time of its last data report.
+    bool checkDevice = false;
+    double lastData = 0;
+    // A receiver that doesn't answer the check is asked again until checkUntil, from nextCheck.
+    double checkUntil = 0, nextCheck = 0;
   };
   enum class OpenResult { Failed, Idle, Ready };
   // Opens and sets up one enumerated HID interface (Start and hotplug).
@@ -209,6 +216,7 @@ class UsbTransport {
   bool TakePairing(Open& o);
   // The stock keepalive to a receiver with no device, each probe pass (logged when it changes).
   void KeepAlive(Open& o);
+  int OtherDeviceConnected(const Open& o);  // 1 another device, 0 the same, -1 no answer
   // A radio command for the thread that owns the receiver. set: the mode to switch to, or
   // nullopt to read it. result: the mode set or read, nullopt if that failed.
   struct RadioCommand {
