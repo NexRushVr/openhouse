@@ -475,6 +475,9 @@ bool UsbTransport::SetPairing(const std::string& receiver, int milliseconds) {
     if (!receivers_.count(receiver)) return false;
   }
   std::lock_guard lock(hapticMutex_);
+  // A newer command replaces a pending one: only the last on or off counts, and a backlog
+  // would reach the receiver late (an "on" after a stop, or an old "off" in a new pairing).
+  std::erase_if(pairing_, [&](const PairCommand& c) { return c.receiver == receiver; });
   pairing_.push_back({receiver, std::clamp(milliseconds, 0, 0xffff)});
   return true;
 }
@@ -588,16 +591,19 @@ std::optional<bool> UsbTransport::BluetoothRadioOn() {
 }
 
 void UsbTransport::ProbeMain() {
-  // Someone is waiting for each radio command, so they don't wait for the slow parts below.
-  const auto serveRadio = [this] {
-    for (auto& o : idle_) TakeRadioCommands(o);
+  // Someone is waiting for each radio or pairing command, so they don't wait for the slow
+  // parts below (a pass takes over a second).
+  const auto serve = [this] {
+    for (auto& o : idle_) {
+      TakeRadioCommands(o);
+      TakePairing(o);
+    }
   };
   while (!stop_) {
     Enumerate(false);
     for (size_t i = 0; i < idle_.size() && !stop_;) {
-      serveRadio();
+      serve();
       Open& o = idle_[i];
-      TakePairing(o);
       if (o.bluetooth) { ++i; continue; }  // nothing can connect to it for now
       DeviceInfo di;
       if (!QueryDeviceInfo(o.dev, &di, 2) || di.serial == 0) { ++i; continue; }
@@ -617,7 +623,7 @@ void UsbTransport::ProbeMain() {
     }
     for (int k = 0; k < 10 && !stop_; ++k) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      serveRadio();
+      serve();
     }
   }
 }
