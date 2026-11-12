@@ -131,7 +131,7 @@ install_schema() {
 # Its defaults, for SteamVR's "reset to default": one line added to SteamVR's own
 # default.vrsettings after its opening brace, removed again on uninstall.
 defaults="$(dirname "$schema")/default.vrsettings"
-defaults_line='"driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "hideLostDevices": false, "record": false, "resetRoom": false, "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true },'
+defaults_line='"driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "hideLostDevices": false, "useSteamVRRooms": true, "record": false, "resetRoom": false, "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true },'
 install_defaults() {
   [[ -f "$defaults" ]] || return 0
   grep -qF "$defaults_line" "$defaults" && return 0

@@ -199,6 +199,8 @@ bool RoomMap::ImportSteamDatabase(const std::string& text, std::string* error) {
     std::vector<Room> imported;
     if (j.contains("known_universes")) {
       for (const auto& u : j.at("known_universes")) {
+        // Our own rooms, written there for SteamVR (src/openvr/steam_rooms.hpp): our map has them.
+        if (u.value("openhouse", false)) continue;
         Room room;
         room.source = "steamvr";
         room.id = "steamvr-" + (u.at("id").is_string() ? u.at("id").get<std::string>()

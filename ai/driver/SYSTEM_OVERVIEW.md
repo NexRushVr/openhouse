@@ -121,7 +121,7 @@ switches were removed for the release). Details and numbers are in `tracking_imp
 - **What it holds:** every base's pose in one world frame. The **origin** base defines
   that frame; its tilt comes from gravity. It's saved to `~/.config/lh/roommap.json`
   (`%APPDATA%\lh` on Windows). It can be imported from SteamVR's `lighthousedb.json`,
-  but that's off by default (`LH_STEAM_DB=auto` enables it).
+  by default only under SteamVR with "Use SteamVR's rooms" on (`LH_STEAM_DB=auto` elsewhere).
 - **Keyframes:** devices contribute moments where they saw two or more bases well. The
   room solver solves all bases jointly against the origin from the newest keyframes,
   about once a second.
@@ -164,6 +164,13 @@ switches were removed for the release). Details and numbers are in `tracking_imp
     - A knocked origin that the room re-placed moves the anchor with it.
   - `LH_HOST_FRAME=steamvr`: align to SteamVR's universe through a shared base
     (`RawAlignment`), as the original did.
+  - SteamVR's rooms (`steam_rooms.hpp`, #82; SteamVR only, `useSteamVRRooms`, on by
+    default): a room imported from SteamVR keeps its universe and frame; one of ours that
+    shares a base with a SteamVR universe with Room Setup (`chaperone_info.vrchap`) takes
+    that universe and frame (decided in the room's first 5 s, kept for the session);
+    otherwise it is its own universe in the pinned frame above, and is written into
+    `lighthousedb.json` (`"openhouse": true`, never imported back) so Room Setup has a
+    universe to save to. Without it SteamVR asked for Room Setup on every start.
 - **RoomPublisher:** shared memory `/openhouse-room-<uid>` (Linux; layout in
   `include/lh/room_shm.h`). It carries every base's pose in the host frame, with
   σ and an origin flag, a *settled* flag (no base moving, all σ < 5 mm) and an *epoch*
