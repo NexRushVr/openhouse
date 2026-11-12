@@ -221,7 +221,9 @@ class Device : public ITrackedDeviceServerDriver {
     pose_.qWorldFromDriverRotation = {1, 0, 0, 0};
     pose_.qDriverFromHeadRotation = {1, 0, 0, 0};
     pose_.qRotation = {1, 0, 0, 0};
-    pose_.result = TrackingResult_Uninitialized;
+    pose_.result = TrackingResult_Calibrating_InProgress;
+    pose_.poseIsValid = false;
+    pose_.deviceIsConnected = true;
   }
 
   EVRInitError Activate(uint32_t objectId) override {
@@ -426,7 +428,7 @@ class Device : public ITrackedDeviceServerDriver {
     const bool settled = b.known && (b.origin || b.locked);
     p.result = !b.known ? TrackingResult_Uninitialized : settled ? TrackingResult_Running_OK
                                                                  : TrackingResult_Calibrating_InProgress;
-    p.poseIsValid = settled;
+    p.poseIsValid = settled && b.seen;
     p.deviceIsConnected = b.seen;
     // Room orientation/alignment can change even when the base position doesn't.
     {
@@ -497,6 +499,8 @@ class Device : public ITrackedDeviceServerDriver {
           props->SetInt32Property(c, Prop_Axis0Type_Int32, k_eControllerAxis_TrackPad);
           props->SetInt32Property(c, Prop_Axis1Type_Int32, k_eControllerAxis_Trigger);
           props->SetBoolProperty(c, Prop_DeviceProvidesBatteryStatus_Bool, true);
+          props->SetFloatProperty(c, Prop_DeviceBatteryPercentage_Float, 1.0f);
+          props->SetBoolProperty(c, Prop_DeviceIsCharging_Bool, false);
           props->SetBoolProperty(c, Prop_Identifiable_Bool, true);
           props->SetStringProperty(c, Prop_NamedIconPathDeviceOff_String, "{htc}/icons/controller_status_off.png");
           props->SetStringProperty(c, Prop_NamedIconPathDeviceSearching_String, "{htc}/icons/controller_status_searching.gif");
@@ -531,6 +535,8 @@ class Device : public ITrackedDeviceServerDriver {
         props->SetInt32Property(c, Prop_Axis1Type_Int32, k_eControllerAxis_Trigger);
         props->SetInt32Property(c, Prop_Axis2Type_Int32, k_eControllerAxis_TrackPad);
         props->SetBoolProperty(c, Prop_DeviceProvidesBatteryStatus_Bool, true);
+        props->SetFloatProperty(c, Prop_DeviceBatteryPercentage_Float, 1.0f);
+        props->SetBoolProperty(c, Prop_DeviceIsCharging_Bool, false);
         props->SetBoolProperty(c, Prop_Identifiable_Bool, true);  // enables SteamVR's Identify button
         const std::string side = left ? "left" : "right";
         props->SetStringProperty(c, Prop_NamedIconPathDeviceOff_String, ("{indexcontroller}/icons/" + side + "_controller_status_off.png").c_str());
@@ -579,6 +585,8 @@ class Device : public ITrackedDeviceServerDriver {
         props->SetInt32Property(c, Prop_ControllerRoleHint_Int32, TrackedControllerRole_OptOut);
         props->SetInt32Property(c, Prop_DeviceClass_Int32, TrackedDeviceClass_GenericTracker);
         props->SetBoolProperty(c, Prop_DeviceProvidesBatteryStatus_Bool, true);
+        props->SetFloatProperty(c, Prop_DeviceBatteryPercentage_Float, 1.0f);
+        props->SetBoolProperty(c, Prop_DeviceIsCharging_Bool, false);
         props->SetBoolProperty(c, Prop_Identifiable_Bool, true);  // enables SteamVR's Identify button
         const std::string icons = "{" + root + "}/icons/tracker_status_";
         props->SetStringProperty(c, Prop_NamedIconPathDeviceOff_String, (icons + "off.png").c_str());
