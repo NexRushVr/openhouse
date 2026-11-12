@@ -351,9 +351,7 @@ class Device : public ITrackedDeviceServerDriver {
     props->SetStringProperty(c, Prop_ModelNumber_String, two ? "Valve SR Imp" : "HTC V2-XD/XE");
     props->SetStringProperty(c, Prop_RenderModelName_String, two ? "lh_basestation_valve_gen2" : "lh_basestation_vive");
     const std::string icons = two ? "{lighthouse}/icons/base2_status_" : "{htc}/icons/base_status_";
-    // "Off" is the standby icon: a base that isn't locked yet is reported as not connected
-    // (UpdateBase), the only state besides ready the status window draws for a base.
-    props->SetStringProperty(c, Prop_NamedIconPathDeviceOff_String, (icons + "standby.png").c_str());
+    props->SetStringProperty(c, Prop_NamedIconPathDeviceOff_String, (icons + "off.png").c_str());
     props->SetStringProperty(c, Prop_NamedIconPathDeviceSearching_String, (icons + "searching.gif").c_str());
     props->SetStringProperty(c, Prop_NamedIconPathDeviceSearchingAlert_String, (icons + "searching_alert.gif").c_str());
     props->SetStringProperty(c, Prop_NamedIconPathDeviceReady_String, (icons + "ready.png").c_str());
@@ -458,7 +456,6 @@ class Device : public ITrackedDeviceServerDriver {
   }
 
   // Base stations: static pose from the room map.
-  std::optional<std::chrono::steady_clock::time_point> firstSeen_;  // UpdateBase
   void UpdateBase(const lh::BaseStationState& b) {
     if (!active_) return;
     DriverPose_t p{};
@@ -474,15 +471,7 @@ class Device : public ITrackedDeviceServerDriver {
     p.result = !b.known ? TrackingResult_Uninitialized : settled ? TrackingResult_Running_OK
                                                                  : TrackingResult_Calibrating_InProgress;
     p.poseIsValid = settled && b.seen;
-    // A seen base that isn't locked yet (nor the origin) is reported as not connected, so the
-    // status window shows its "off" icon, the standby one (above), until it locks; then ready.
-    // Connected for its first seconds: the status window reads a device's icons when it first
-    // shows it connected, and one never connected got SteamVR's generic base icon instead.
-    // Our tracking uses a learning base all the same; only SteamVR's view leaves it out.
-    const auto now = std::chrono::steady_clock::now();
-    if (b.seen && !firstSeen_) firstSeen_ = now;
-    const bool learning = b.seen && !(b.origin || b.locked);
-    p.deviceIsConnected = b.seen && !(learning && now - *firstSeen_ > std::chrono::seconds(5));
+    p.deviceIsConnected = b.seen;
     // Room orientation/alignment can change even when the base position doesn't.
     {
       std::lock_guard lock(poseMutex_);
