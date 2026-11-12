@@ -14,7 +14,17 @@ if [[ ! -f "$backup" ]] || ! grep -qa "$marker" "$target"; then
   echo "Saved SteamVR's driver as $backup"
 fi
 mkdir -p "$dir/lh-libs"
-cp -a "$here/lh-libs/." "$dir/lh-libs/"
+# Each library is replaced by a new file (copy, then rename), never written over: the Steam
+# client loads our driver and these libraries too, and one overwritten under a running Steam
+# crashed it (SIGSEGV) the next time SteamVR started. A process keeps its old copy this way.
+for lib in "$here/lh-libs/"*; do
+  name=$(basename "$lib")
+  if [[ -L "$lib" ]]; then
+    ln -sfn "$(readlink "$lib")" "$dir/lh-libs/$name.new" && mv -Tf "$dir/lh-libs/$name.new" "$dir/lh-libs/$name"
+  else
+    cp -p "$lib" "$dir/lh-libs/$name.new" && mv -f "$dir/lh-libs/$name.new" "$dir/lh-libs/$name"
+  fi
+done
 rm -f "$target.new"
 cp "$here/driver_lighthouse.so" "$target.new" && mv -f "$target.new" "$target"
 install_schema  # the openhouse page in SteamVR's settings

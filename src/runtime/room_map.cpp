@@ -112,13 +112,16 @@ bool RoomMap::Load(const std::string& path, std::string* error) {
       // (same universe, same Room Setup), instead of fighting every device's light.
       room.modelScale = r.value("modelScale", 0);
       if (room.modelScale != Room::kModelScale) {
-        constexpr int kEvidence = 30;
+        // Still learned (BaseStationState: 40 keyframes under 20 mm), so it keeps showing
+        // and tracking as one; only no longer locked. 30 keyframes at 17 mm made every such
+        // base "learning" again: searching in SteamVR and missing from Room Setup until relearned.
+        constexpr int kEvidence = 40;  // BaseStationState::kLearnedObservations
         for (auto& [serial, base] : room.bases) {
           if (base.origin) continue;
           base.observations = std::min(base.observations, kEvidence);
           base.storedObservations = base.observations;
-          base.positionVariance = std::max(base.positionVariance, 3 * 0.01 * 0.01);
-          base.rotationVariance = std::max(base.rotationVariance, 3 * 0.003 * 0.003);
+          base.positionVariance = std::max(base.positionVariance, 0.01 * 0.01);
+          base.rotationVariance = std::max(base.rotationVariance, 0.003 * 0.003);
         }
         if (room.modelScale == 0 && !room.bases.empty())
           Log("Room " + room.id + " was learned without the devices' model scales; refining its bases again");
@@ -707,10 +710,18 @@ void RoomMap::ApplySolved(uint32_t serial, const Eigen::Isometry3d& pose, double
     place = true;
   }
   auto& b = found->second;
-  if (Locked(b)) return;
   const Eigen::Isometry3d now = solvedTarget_.count(serial) ? solvedTarget_[serial] : b.worldFromBase;
   const double dp = (now.translation() - pose.translation()).norm();
   const double dr = Eigen::AngleAxisd(now.rotation().transpose() * pose.rotation()).angle();
+  // Locked (placed well: 100+ keyframes, under 20 mm) used to be frozen: one locked at 19 mm
+  // stayed 2 cm off for good. It keeps its lock (no device can relearn it, a move is the
+  // session's to find: Session::LightMovedLockedBase), and still takes the refinement below
+  // from solves that agree with it, at half the weight and only from more than one device's
+  // view (or plenty of keyframes): a well-placed one barely moves, a loosely locked one
+  // settles toward where the room's light puts it, over this session and the next.
+  const bool locked = Locked(b);
+  if (locked && (fresh == 0 || (devices < 2 && keyframes < 80) || FarOff(serial, pose, pv, rv))) return;
+  if (!locked) {
   if (place) {
     b.worldFromBase = pose;
     solvedTarget_.erase(serial);
@@ -781,12 +792,13 @@ void RoomMap::ApplySolved(uint32_t serial, const Eigen::Isometry3d& pose, double
     return;
   }
   b.farSolves = 0;
+  }  // !locked
   if (fresh <= 0) return;
   // Information-weighted: the fresh share of this window is new evidence, worth
   // fresh / keyframes of the window's information; the room's own is its variance's.
   // An early solve from a few keyframes (sigma 2 cm) moves a settled room hardly at all.
   const double roomInfo = 1.0 / std::max(b.positionVariance, kFloorVariance);
-  const double newInfo = double(std::min(fresh, keyframes)) / double(keyframes) / std::max(pv, 1e-12);
+  const double newInfo = (locked ? 0.5 : 1.0) * double(std::min(fresh, keyframes)) / double(keyframes) / std::max(pv, 1e-12);
   const double gain = newInfo / (roomInfo + newInfo);
   Eigen::Isometry3d target = now;
   target.translation() += gain * (pose.translation() - now.translation());

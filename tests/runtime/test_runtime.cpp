@@ -1255,7 +1255,9 @@ TEST(RoomMap, RoomLearnedWithoutModelScalesIsRefinedOnce) {
   room.OnBaseSeen(Config(2), {});
   ASSERT_NE(room.Base(2), nullptr);
   EXPECT_FALSE(RoomMap::Locked(*room.Base(2)));
-  EXPECT_GE(room.Base(2)->positionVariance, 3e-4);
+  EXPECT_GE(room.Base(2)->positionVariance, 1e-4);
+  EXPECT_LE(room.Base(2)->positionVariance, 0.02 * 0.02);  // still learned (40 keyframes, under 20 mm)
+  EXPECT_GE(room.Base(2)->observations, lh::BaseStationState::kLearnedObservations);
   EXPECT_NEAR(room.Base(2)->worldFromBase.translation().x(), 3, 1e-9);  // kept, not reset
   EXPECT_TRUE(room.Base(1)->origin);
   bool said = false;
