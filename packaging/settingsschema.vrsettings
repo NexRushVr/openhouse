@@ -70,6 +70,12 @@
                 "control": "toggle",
                 "label": "Mixed Basestations: headset times the 2.0 stations (fewer blips)",
                 "show_without_hmd": true
+            },
+            {
+                "name": "/settings/driver_openhouse/mixedLightPreferLh2",
+                "control": "toggle",
+                "label": "Mixed Basestations: use the 1.0 stations only while no 2.0 station lights a device well (steadier, test)",
+                "show_without_hmd": true
             }
         ]
     }

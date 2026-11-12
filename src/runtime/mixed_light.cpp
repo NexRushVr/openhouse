@@ -77,6 +77,14 @@ MixedLightStep ChooseMixedLight(const MixedLightView& v, double visitEvery) {
       // Unplaced, a pose can't come in LH2 mode: waiting for one would only keep the device blind.
       const bool posed = v.tracking || v.lh2Unplaced;
       const bool done = v.learningRotors == 0 && v.unnamedRotors == 0 && posed;
+      // preferLh2: its rotors known, it stays while a 2.0 station lights it well, and leaves for the 1.0
+      // light when none does, or when it has lost tracking on the 2.0 light alone.
+      if (v.preferLh2 && !noLh2Pose && v.inMode >= kMinVisit && v.learningRotors == 0 && v.unnamedRotors == 0) {
+        if (v.tracking && v.lh2Short >= kPreferShort) return {0, "too little 2.0 light"};
+        if (!v.tracking && v.lost >= kLostBeforeHelp) return {0, "lost on 2.0 light"};
+        if (v.dark >= kVisitDark) return {0, "no 2.0 light"};
+        return resend ? MixedLightStep{1, "re-send"} : MixedLightStep{};
+      }
       if (done && v.inMode >= kMinVisit) return {0, "rotors ready"};
       if (v.inMode >= kMinVisit && v.dark >= kVisitDark) return {0, "no 2.0 light"};
       const double naming = posed ? kMaxNaming : kMaxNamingLost;
@@ -88,6 +96,8 @@ MixedLightStep ChooseMixedLight(const MixedLightView& v, double visitEvery) {
   if (v.readyRotors == 0 && v.inMode >= kNoRotorsRetry) return {1, "no rotors yet"};
   if (v.lost >= kLostBeforeHelp && v.inMode >= kMinLh1 && !noLh2Pose) return {1, "lost"};
   if (visitEvery > 0 && v.inMode >= visitEvery && (v.calm || v.inMode >= visitEvery * kOverdueFactor)) return {1, "visit"};
+  if (v.preferLh2 && !noLh2Pose && v.tracking && v.calm && v.inMode >= kPreferMinLh1 && v.lh2Covered >= kPreferCovered)
+    return {1, "2.0 light is enough"};
   return {};
 }
 

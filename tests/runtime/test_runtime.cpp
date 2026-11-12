@@ -1009,6 +1009,8 @@ TEST(MixedLight, SettingsFileTurnsItOnWithItsOptions) {
   EXPECT_TRUE(m.controllers);
   EXPECT_FALSE(m.trackers);
   EXPECT_FALSE(m.scout);
+  EXPECT_FALSE(m.preferLh2) << "LH1 mode once the rotors are known, unless asked";
+  EXPECT_TRUE(MixedFromSettings(R"({"mixedLight": {"enabled": true, "preferLh2": true}})").preferLh2);
 }
 
 TEST(MixedLight, SettingsFileAcceptsABool) {

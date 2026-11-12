@@ -251,6 +251,10 @@ class SessionImpl final : public Session, public InputSinkBase {
     double lastPulse = -1e300, lastBeam = -1e300, lastTracked = -1e300, modeSent = -1e300, nextLightCheck = 0;
     double lastBeamDeviceTime = 0, lastPulseDeviceTime = 0;
     bool everLh2 = false;  // has sent a beam word this session
+    // MixedLightOptions::preferLh2: since when a 2.0 station has lit it well without a break, and when one
+    // last did.
+    double lh2CoveredSince = -1e300, lh2CoveredLast = -1e300;
+    bool lh2Covered = false;
     bool lh1Only = false;  // can't do LH2 mode (runtime::LooksLh1Only): left out of 1.0 + 2.0
     // The scout (UpdateScout): per channel, the line it follows and whose periods it follows.
     struct Scouted {
@@ -899,6 +903,18 @@ void SessionImpl::UpdateMixedLight(const DeviceId& id, Device& d) {
   view.everLh2 = d.everLh2;
   view.lh2Unseen = !lh2Seen_;
   view.lh2Unplaced = lh2Seen_ && !lh2Placed_;
+  bool covered = false;
+  for (const auto& c : out.coverage) {
+    const auto base = bases_.find(c.base);
+    covered |= base != bases_.end() && base->second.config.model != 1 && c.frames >= runtime::kPreferFrames &&
+               c.sensors >= runtime::kPreferSensors;
+  }
+  if (covered && !d.lh2Covered) d.lh2CoveredSince = now_;
+  if (covered) d.lh2CoveredLast = now_;
+  d.lh2Covered = covered;
+  view.preferLh2 = mixed_.preferLh2;
+  view.lh2Covered = covered ? now_ - d.lh2CoveredSince : 0;
+  view.lh2Short = covered ? 0 : now_ - d.lh2CoveredLast;
   if (runtime::LooksLh1Only(view)) {
     d.lh1Only = true;
     StartMixedLight(d);
@@ -1582,7 +1598,7 @@ void SessionImpl::LoadSettings() {
     for (const auto& serial : j.value("disabledDevices", std::vector<std::string>{})) disabled_.insert(serial);
     if (j.contains("mixedLight")) {
       // 1.0 and 2.0 base stations together: true/false, or
-      // {"enabled": true, "controllers": true, "trackers": true, "scout": true}. Under SteamVR the
+      // {"enabled": true, "controllers": true, "trackers": true, "scout": true, "preferLh2": false}. Under SteamVR the
       // driver's settings page wins once it has values (this seeds them); Monado and WiVRn use this.
       const auto& m = j.at("mixedLight");
       MixedLightOptions o;
@@ -1598,6 +1614,7 @@ void SessionImpl::LoadSettings() {
         o.controllers = get("controllers", true);
         o.trackers = get("trackers", true);
         o.scout = get("scout", true);
+        o.preferLh2 = get("preferLh2", false);
       } else {
         throw std::runtime_error("mixedLight must be true, false or an object");
       }
@@ -1727,7 +1744,8 @@ void SessionImpl::SetMixedLight(const MixedLightOptions& options) {
   auto onOff = [](bool on) { return on ? "on" : "off"; };
   Emit(SessionEventType::Log, "", std::string("1.0 + 2.0 base stations together: switch ") + onOff(options.enabled) + " (controllers " +
                                   onOff(options.controllers) + ", trackers " + onOff(options.trackers) + ", scout " +
-                                  onOff(options.scout) + ")", LogLevel::Info);
+                                  onOff(options.scout) + ", LH2 mode preferred " + onOff(options.preferLh2) + ")",
+                                  LogLevel::Info);
   UpdateMixedRoom();
   if (switched)  // learning rotors starts or stops, in use or not
     for (auto& [id, d] : devices_) StartMixedLight(d);

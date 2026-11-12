@@ -101,6 +101,86 @@ TEST(MixedLight, AVisitInDarknessEndsEarly) {
   EXPECT_EQ(Mode(v), -1);
 }
 
+// MixedLightOptions::preferLh2: LH2 mode while a 2.0 station lights the device well.
+TEST(MixedLight, PreferringLh2StaysThereWhileThe2Point0LightIsEnough) {
+  MixedLightView v = InLh2(2.5);
+  v.preferLh2 = true;
+  v.lh2Covered = 2.5;
+  EXPECT_EQ(Mode(v), -1);  // where it would have left with its rotors ready
+  v.inMode = v.lh2Covered = 600.0;
+  EXPECT_EQ(Mode(v), -1);
+  v.preferLh2 = false;
+  EXPECT_EQ(Mode(v), 0);
+}
+
+TEST(MixedLight, PreferringLh2LeavesWhenThe2Point0LightRunsShort) {
+  MixedLightView v = InLh2(600.0);
+  v.preferLh2 = true;
+  v.lh2Short = 0.1;
+  EXPECT_EQ(Mode(v), -1);  // a sweep or two missed
+  v.lh2Short = 0.25;
+  const MixedLightStep step = ChooseMixedLight(v, kVisits);
+  EXPECT_EQ(step.mode, 0);
+  EXPECT_EQ(std::string(step.why), "too little 2.0 light");
+  v.inMode = 1.0;
+  EXPECT_EQ(Mode(v), -1);  // but a visit still lasts long enough to hear a new rotor
+  v.inMode = 5.0;
+  v.learningRotors = 1;
+  EXPECT_EQ(Mode(v), -1);  // and to learn one
+}
+
+TEST(MixedLight, PreferringLh2LeavesWhenLostOnThe2Point0LightAlone) {
+  MixedLightView v = InLh2(600.0);
+  v.preferLh2 = true;
+  v.tracking = false;
+  v.lh2Short = 0.6;
+  v.lost = 0.5;
+  EXPECT_EQ(Mode(v), -1);  // long enough to recover where it is
+  v.lost = 1.0;
+  const MixedLightStep step = ChooseMixedLight(v, kVisits);
+  EXPECT_EQ(step.mode, 0);
+  EXPECT_EQ(std::string(step.why), "lost on 2.0 light");
+  v.dark = 5.0;
+  v.lost = 0.5;
+  EXPECT_EQ(std::string(ChooseMixedLight(v, kVisits).why), "no 2.0 light");
+}
+
+TEST(MixedLight, PreferringLh2GoesBackOnceThe2Point0LightHasHeld) {
+  MixedLightView v = InLh1(30.0);
+  v.preferLh2 = true;
+  v.lh2Covered = 9.0;
+  EXPECT_EQ(Mode(v), -1);  // not held long enough
+  v.lh2Covered = 10.0;
+  const MixedLightStep step = ChooseMixedLight(v, kVisits);
+  EXPECT_EQ(step.mode, 1);
+  EXPECT_EQ(std::string(step.why), "2.0 light is enough");
+  v.calm = false;
+  EXPECT_EQ(Mode(v), -1);  // half a second without light: not while moving
+  v.calm = true;
+  v.inMode = 19.0;
+  EXPECT_EQ(Mode(v), -1);  // nor straight back: at most one such gap in 20 s
+  v.inMode = 30.0;
+  v.tracking = false;
+  EXPECT_EQ(Mode(v), -1);  // lost, the usual rule decides
+  v.tracking = true;
+  v.preferLh2 = false;
+  EXPECT_EQ(Mode(v), -1);  // off: only the visits
+}
+
+TEST(MixedLight, PreferringLh2WaitsForA2Point0StationToBePlaced) {
+  // LH2 mode gives no pose yet: staying there would leave the device blind.
+  MixedLightView v = InLh2(2.5);
+  v.preferLh2 = true;
+  v.lh2Covered = 2.5;
+  v.lh2Unplaced = true;
+  EXPECT_EQ(Mode(v), 0);
+  v = InLh1(30.0);
+  v.preferLh2 = true;
+  v.lh2Covered = 30.0;
+  v.lh2Unplaced = true;
+  EXPECT_EQ(Mode(v), -1);
+}
+
 TEST(MixedLight, VisitsWhenCalm) {
   EXPECT_EQ(Mode(InLh1(44.0)), -1);
   EXPECT_EQ(Mode(InLh1(45.0)), 1);

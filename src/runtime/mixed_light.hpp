@@ -43,6 +43,21 @@ constexpr double kLh1HitScatter = 0.5e-3;     // rad, of a 1.0 station's angle
 constexpr double kRotorWobble = 0.3e-3;       // rad
 constexpr double kRotorWobbleMemory = 0.2;    // s
 
+// MixedLightOptions::preferLh2 (a test, not run live): LH2 mode while the 2.0 light is enough, LH1 mode only
+// while it isn't. In LH1 mode a sorted hit's angle hangs on its rotor keeping to a line, which it doesn't
+// (tracking/rotor_wobble.hpp), and trackers lying still swayed 0.22-0.41 mm rms against 0.07-0.12 mm in LH2
+// mode, 0.12-0.36 mm with the wobble followed. Enough: a 2.0 station lighting kPreferSensors sensors a frame
+// in at least kPreferFrames frames of the last 0.5 s (of about 50), which gives a pose by itself. In the
+// recording those numbers are from, the trackers had that for 76-89 % of their time in LH1 mode (65-74 % in
+// one where they were carried about), and for 90-93 % of the LH2 stretches the 0.07-0.12 mm is from. Going
+// to LH1 mode costs 10-20 ms, so it's left as soon as the light has been short for kPreferShort; coming back
+// costs 0.2-0.5 s without light, so that waits for kPreferCovered of enough light without a break, a calm
+// moment, and kPreferMinLh1 in LH1 mode: at worst one such gap every 20 s, where the light comes and goes.
+constexpr int kPreferSensors = 4, kPreferFrames = 20;
+constexpr double kPreferShort = 0.25;    // s
+constexpr double kPreferCovered = 10.0;  // s
+constexpr double kPreferMinLh1 = 20.0;   // s
+
 // Whether a device of this kind reads both kinds of base station.
 bool MixesLight(DeviceRole role, const MixedLightOptions& options);
 
@@ -67,6 +82,10 @@ struct MixedLightView {
   // gives no pose until a device on the 1.0 light places one from its sorted hits. So every device, the
   // headset too, visits LH2 mode only to learn the rotors, and stays on the 1.0 light even when lost there.
   bool lh2Unplaced = false;
+  // MixedLightOptions::preferLh2. lh2Covered: s a 2.0 station has lit the device well without a break (0:
+  // none does now); lh2Short: s since one last did (0: one does now).
+  bool preferLh2 = false;
+  double lh2Covered = 0, lh2Short = 0;
 };
 
 struct MixedLightStep {

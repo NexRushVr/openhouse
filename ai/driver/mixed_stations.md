@@ -134,6 +134,20 @@ the pose still has to come from somewhere, and with the wobble out the rest of t
 difference, the frame's shape, the 1.0 stations) holds it less firmly than LH2 words would. Passing the
 headset's wobble to the others (it hears the real words) would take out about a fifth more; not built.
 
+**LH2 mode while the 2.0 light is enough** (`MixedLightOptions::preferLh2`, "use the 1.0 stations only while
+no 2.0 station lights a device well", a test, off; `runtime::ChooseMixedLight`). Not run live, and a replay
+can't show it (its modes are the recording's): unit tests only. LH2 mode has no wobble, so the surest way
+to LH2 mode's steadiness is to be in it: the same trackers, lying in the same place, 0.07-0.12 mm against
+0.12-0.36 mm with the wobble followed. With this a device whose rotors are known stays in LH2 mode while a
+2.0 station lights it well (4 sensors a frame in 20 frames of the last 0.5 s, enough for a pose by itself),
+goes to LH1 mode when none has for 0.25 s or it has been lost for 1 s (10-20 ms to the first pulse), and
+comes back after 10 s of such light without a break, at a calm moment, 20 s in LH1 mode at the least
+(0.2-0.5 s without light, so at worst one such gap every 20 s). In the still recording the trackers had
+such light for 76-89 % of their time in LH1 mode, in one where they were carried about 65-74 %, and for
+90-93 % of the LH2 stretches the 0.07-0.12 mm is from. What it costs is the 1.0 light while the 2.0 light
+looks enough: a device whose one 2.0 station is covered goes about 0.5 s on the IMU before the 1.0 light is
+there, where in LH1 mode it would have had it throughout.
+
 **lhbs multi-station** auto-detection waits while sorting (`TrackingSource::UseMulti`), as it was off
 (`LH_MULTISTATION=off`) for every test here. The room's lone stock 1.0 station (channel A, no cable) tripped
 it even with the 2.0 stations off: "multi-station layout detected (0 multi / 0 stock flash pairs)", through
