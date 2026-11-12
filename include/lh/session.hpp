@@ -189,9 +189,9 @@ struct MixedLightOptions {
   // The headset, in LH2 mode, times each 2.0 station for the others, so they visit LH2 mode half as
   // often while it covers every station they use.
   bool scout = true;
-  // On (a test, not run live): a device stays in LH2 mode while a 2.0 station lights it well, and reads
-  // the 1.0 stations (LH1 mode) only while none does. In LH2 mode a hit carries its own angle, and a
-  // tracker lying still swayed a third as much (runtime/mixed_light.hpp, kPreferSensors).
+  // On (a test): a device stays in LH2 mode while the 2.0 stations light it well, and reads the 1.0
+  // stations (LH1 mode) only while they don't. In LH2 mode a hit carries its own angle, and a tracker
+  // lying still swayed a third as much (runtime/mixed_light.hpp, Lh2LightEnough).
   bool preferLh2 = false;
   bool operator==(const MixedLightOptions&) const = default;
 };

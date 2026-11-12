@@ -6,6 +6,8 @@
 #include "runtime/mixed_light.hpp"
 
 using lh::runtime::ChooseMixedLight;
+using lh::runtime::Lh2Light;
+using lh::runtime::Lh2LightEnough;
 using lh::runtime::MixedLightStep;
 using lh::runtime::MixedLightView;
 
@@ -101,7 +103,18 @@ TEST(MixedLight, AVisitInDarknessEndsEarly) {
   EXPECT_EQ(Mode(v), -1);
 }
 
-// MixedLightOptions::preferLh2: LH2 mode while a 2.0 station lights the device well.
+// MixedLightOptions::preferLh2: LH2 mode while the 2.0 stations light the device well.
+TEST(MixedLight, The2Point0StationsLightADeviceTogether) {
+  EXPECT_TRUE(Lh2LightEnough({{20, 4.0}}));               // one station, a pose by itself
+  EXPECT_FALSE(Lh2LightEnough({{19, 4.0}}));
+  EXPECT_TRUE(Lh2LightEnough({{40, 3.6}, {38, 3.7}}));    // a Knuckles lit by two, neither enough alone
+  EXPECT_TRUE(Lh2LightEnough({{25, 2.8}, {26, 3.1}}));    // the one lighting too few sensors left out
+  EXPECT_FALSE(Lh2LightEnough({{25, 2.8}, {25, 3.1}}));
+  EXPECT_FALSE(Lh2LightEnough({{40, 2.9}}));              // too few sensors a frame, however often
+  EXPECT_FALSE(Lh2LightEnough({{8, 9.0}, {20, 3.5}}));    // a station seen in a few frames isn't counted
+  EXPECT_FALSE(Lh2LightEnough({}));
+}
+
 TEST(MixedLight, PreferringLh2StaysThereWhileThe2Point0LightIsEnough) {
   MixedLightView v = InLh2(2.5);
   v.preferLh2 = true;

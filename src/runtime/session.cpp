@@ -903,12 +903,12 @@ void SessionImpl::UpdateMixedLight(const DeviceId& id, Device& d) {
   view.everLh2 = d.everLh2;
   view.lh2Unseen = !lh2Seen_;
   view.lh2Unplaced = lh2Seen_ && !lh2Placed_;
-  bool covered = false;
+  std::vector<runtime::Lh2Light> lh2Light;
   for (const auto& c : out.coverage) {
     const auto base = bases_.find(c.base);
-    covered |= base != bases_.end() && base->second.config.model != 1 && c.frames >= runtime::kPreferFrames &&
-               c.sensors >= runtime::kPreferSensors;
+    if (base != bases_.end() && base->second.config.model != 1) lh2Light.push_back({c.frames, c.sensors});
   }
+  const bool covered = runtime::Lh2LightEnough(lh2Light);
   if (covered && !d.lh2Covered) d.lh2CoveredSince = now_;
   if (covered) d.lh2CoveredLast = now_;
   d.lh2Covered = covered;

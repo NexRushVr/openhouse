@@ -43,23 +43,35 @@ constexpr double kLh1HitScatter = 0.5e-3;     // rad, of a 1.0 station's angle
 constexpr double kRotorWobble = 0.3e-3;       // rad
 constexpr double kRotorWobbleMemory = 0.2;    // s
 
-// MixedLightOptions::preferLh2 (a test, not run live): LH2 mode while the 2.0 light is enough, LH1 mode only
-// while it isn't. In LH1 mode a sorted hit's angle hangs on its rotor keeping to a line, which it doesn't
+// MixedLightOptions::preferLh2 (a test): LH2 mode while the 2.0 light is enough, LH1 mode only while it
+// isn't. In LH1 mode a sorted hit's angle hangs on its rotor keeping to a line, which it doesn't
 // (tracking/rotor_wobble.hpp), and trackers lying still swayed 0.22-0.41 mm rms against 0.07-0.12 mm in LH2
-// mode, 0.12-0.36 mm with the wobble followed. Enough: a 2.0 station lighting kPreferSensors sensors a frame
-// in at least kPreferFrames frames of the last 0.5 s (of about 50), which gives a pose by itself. In the
-// recording those numbers are from, the trackers had that for 76-89 % of their time in LH1 mode (65-74 % in
-// one where they were carried about), and for 90-93 % of the LH2 stretches the 0.07-0.12 mm is from. Going
-// to LH1 mode costs 10-20 ms, so it's left as soon as the light has been short for kPreferShort; coming back
-// costs 0.2-0.5 s without light, so that waits for kPreferCovered of enough light without a break, a calm
-// moment, and kPreferMinLh1 in LH1 mode: at worst one such gap every 20 s, where the light comes and goes.
-constexpr int kPreferSensors = 4, kPreferFrames = 20;
+// mode, 0.12-0.36 mm with the wobble followed (live 2026-11-11: 0.17 and 0.08 mm in LH2 mode against 0.50
+// and 0.12 mm in LH1 mode). Enough (Lh2LightEnough): kPreferHits sensor hits in the last 0.5 s from the 2.0
+// stations together, counting each seen in kPreferFrames frames (of about 50) with kPreferSensors sensors a
+// frame. It was one station lighting 4 sensors a frame in 20 frames, a pose by itself; but LH2 mode tracks
+// on the stations together, and Knuckles lit 3-4 sensors a frame by each of two fell short of that for up to
+// 17 % of their time there: live they left after 2.6-11 s while tracking 93-97 % of it, and waited 20 s to
+// come back. Going to LH1 mode costs 10-20 ms, so it's left as soon as the light has been short for
+// kPreferShort; coming back costs 0.5-1.5 s without new light (live), so that waits for kPreferCovered of
+// enough light without a break, a calm moment, and kPreferMinLh1 in LH1 mode: at worst one such gap every
+// 20 s, where the light comes and goes.
+constexpr int kPreferFrames = 10;
+constexpr double kPreferSensors = 3, kPreferHits = 80;
 constexpr double kPreferShort = 0.25;    // s
 constexpr double kPreferCovered = 10.0;  // s
 constexpr double kPreferMinLh1 = 20.0;   // s
 
 // Whether a device of this kind reads both kinds of base station.
 bool MixesLight(DeviceRole role, const MixedLightOptions& options);
+
+// One 2.0 station's light on a device in the last 0.5 s: frames, and the mean sensors lit per frame.
+struct Lh2Light {
+  int frames = 0;
+  double sensors = 0;
+};
+// MixedLightOptions::preferLh2: whether the 2.0 stations light the device well enough to stay in LH2 mode.
+bool Lh2LightEnough(const std::vector<Lh2Light>& stations);
 
 struct MixedLightView {
   int mode = -1;           // 0 = LH1, 1 = LH2, -1 = not sent yet

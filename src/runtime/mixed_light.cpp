@@ -62,6 +62,13 @@ bool MixesLight(DeviceRole role, const MixedLightOptions& options) {
   return false;
 }
 
+bool Lh2LightEnough(const std::vector<Lh2Light>& stations) {
+  double hits = 0;
+  for (const auto& s : stations)
+    if (s.frames >= kPreferFrames && s.sensors >= kPreferSensors) hits += s.frames * s.sensors;
+  return hits >= kPreferHits;
+}
+
 MixedLightStep ChooseMixedLight(const MixedLightView& v, double visitEvery) {
   if (v.mode < 0) return {1, "start in LH2"};
   const bool resend = v.dark >= kResend && v.sinceSent >= kResend;
@@ -77,7 +84,7 @@ MixedLightStep ChooseMixedLight(const MixedLightView& v, double visitEvery) {
       // Unplaced, a pose can't come in LH2 mode: waiting for one would only keep the device blind.
       const bool posed = v.tracking || v.lh2Unplaced;
       const bool done = v.learningRotors == 0 && v.unnamedRotors == 0 && posed;
-      // preferLh2: its rotors known, it stays while a 2.0 station lights it well, and leaves for the 1.0
+      // preferLh2: its rotors known, it stays while the 2.0 stations light it well, and leaves for the 1.0
       // light when none does, or when it has lost tracking on the 2.0 light alone.
       if (v.preferLh2 && !noLh2Pose && v.inMode >= kMinVisit && v.learningRotors == 0 && v.unnamedRotors == 0) {
         if (v.tracking && v.lh2Short >= kPreferShort) return {0, "too little 2.0 light"};
