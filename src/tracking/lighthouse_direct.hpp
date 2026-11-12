@@ -139,7 +139,7 @@ class LighthouseDirect {
   std::vector<OpticalSample> Gather(const std::vector<OpticalSample>&) const;
   void FilterOutliers(std::vector<OpticalSample>* samples, double distance) const;
   void FollowRotorWobble(uint32_t serial, double time, const std::vector<direct::Residual>& residuals,
-                         const std::vector<bool>& sorted, std::vector<double>* z, direct::Mat* R);
+                         const std::vector<bool>& sorted, std::vector<double>* z, const direct::Mat& R);
 
   TrackedObjectModel model_;
   direct::DirectFilter filter_;

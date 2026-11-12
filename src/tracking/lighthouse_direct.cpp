@@ -377,11 +377,20 @@ bool LighthouseDirect::Bootstrap(const OpticalFrame& frame, const BaseConfig& ba
 }
 
 // Not stock (rotor_wobble.hpp): what a frame's sorted hits have in common against the predicted state goes
-// to their rotor's wobble, as far as the state is known better than the wobble, and comes off the hits. What
-// is left unsure of it stays on them as scatter they share. z and R are the update's, R already filled in.
+// to their rotor's wobble, as far as the state is known better than the wobble, and comes off the hits.
+// z and R are the update's, R already filled in.
+//
+// The hits' weights stay as they were. At first what was left unsure of the wobble went onto them as scatter
+// they share (its variance on every pair of the rotor's rows), which makes a frame's mean count for less:
+// by 0.3 mrad while the wobble isn't followed (a fresh pose, thin light), 0.12-0.15 mrad while it is. A
+// frame's mean is what holds a pose that little else lights. A 2018 tracker with one rotor's 3-4 sensors a
+// frame and a 1.0 station just added had its IMU calibration run off (15 deg) and reset 1 s after its first
+// LH1 mode, in 8 replays of 8 with the shared scatter (capped at 0.15 mrad too) and 0 of 9 without. The
+// steadiness is all from taking the offset out: still jitter 0.25, 0.23, 0.23 mm (3.0 tracker,
+// Knuckles) to 0.16, 0.11, 0.12 with both, 0.17, 0.12, 0.12 without the shared scatter, 0.24, 0.22, 0.21
+// with it alone.
 void LighthouseDirect::FollowRotorWobble(uint32_t serial, double time, const std::vector<Residual>& residuals,
-                                         const std::vector<bool>& sorted, std::vector<double>* z, Mat* R) {
-  constexpr double kOutlier = 0.5e-3;  // rad from the frame's median: another station's hit, a reflection
+                                         const std::vector<bool>& sorted, std::vector<double>* z, const Mat& R) {
   std::vector<int> rows;
   for (size_t i = 0; i < sorted.size(); ++i)
     if (sorted[i]) rows.push_back(int(i));
@@ -399,28 +408,21 @@ void LighthouseDirect::FollowRotorWobble(uint32_t serial, double time, const std
     off[k] = (*z)[size_t(rows[k])] - predicted.a;
     jacobian[k] = predicted.v.head(n).transpose();
   }
-  std::vector<double> ordered = off;
-  std::nth_element(ordered.begin(), ordered.begin() + std::ptrdiff_t(ordered.size() / 2), ordered.end());
-  const double median = ordered[ordered.size() / 2];
-  Eigen::RowVectorXd mean = Eigen::RowVectorXd::Zero(n);
-  double sum = 0, scatter = 0;
-  int used = 0;
-  for (size_t k = 0; k < rows.size(); ++k) {
-    if (std::fabs(off[k] - median) > kOutlier) continue;
-    sum += off[k];
-    mean += jacobian[k];
-    scatter += (*R)(rows[k], rows[k]);
-    ++used;
-  }
-  if (used >= 2) {  // one hit says nothing about what its frame has in common
+  const std::vector<size_t> common = direct::HitsInCommon(off);
+  if (!common.empty()) {
+    Eigen::RowVectorXd mean = Eigen::RowVectorXd::Zero(n);
+    double sum = 0, scatter = 0;
+    for (const size_t k : common) {
+      sum += off[k];
+      mean += jacobian[k];
+      scatter += R(rows[k], rows[k]);
+    }
+    const double used = double(common.size());
     mean /= used;
     const double pose = (mean * filter_.Ppred.topLeftCorner(n, n) * mean.transpose())(0, 0);
-    wobble.Update(sum / used, pose, scatter / (double(used) * used));
+    wobble.Update(sum / used, pose, scatter / (used * used));
   }
-  for (const int i : rows) {
-    (*z)[size_t(i)] -= wobble.value;
-    for (const int j : rows) (*R)(i, j) += wobble.variance;
-  }
+  for (const int i : rows) (*z)[size_t(i)] -= wobble.value;
 }
 
 bool LighthouseDirect::OpticalUpdate(const OpticalFrame& frame, const BaseConfig& base, int slot) {
@@ -489,7 +491,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
     }
   }
   R(m - 1, m - 1) = 1e-8;
-  if (wobbleSpread_ > 0) FollowRotorWobble(base.serial, time, residuals, sorted, &z, &R);
+  if (wobbleSpread_ > 0) FollowRotorWobble(base.serial, time, residuals, sorted, &z, R);
   // Not stock: right after a reseed (reacquired with a carried calibration, so already
   // at 201 updates) the other bases' light isn't frame-gated: it is what corrects the
   // new pose, and gated, the device tracked from one base on a pose the others never fit

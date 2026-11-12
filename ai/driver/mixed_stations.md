@@ -125,14 +125,57 @@ to 0.02-0.07 mrad of one another, as LH2 words do. The headset's real words for 
 of it (slope 0.94-1.0, r = 0.6: 0.127 to 0.101 mrad), so more than the rotor is in it. A 1.0 station's frames
 don't wander (0.02-0.03 mrad). So each rotor's offset is followed from what a frame's sorted hits have in
 common against the pose, as far as the pose is known better than the offset (0.3 mrad, fading over 0.2 s),
-and comes off the hits before the filter takes them; what's unsure of it stays on them as scatter they
-share. A pose just reacquired or swinging is unsure, and the light then corrects it as before. Replayed
+and comes off the hits before the filter takes them (at first what was unsure of it also went onto them as
+scatter they share: below). A pose just reacquired or swinging is unsure, and the light then corrects it as
+before. Replayed
 (still jitter, median rms over 0.5 s, four stretches): the 3.0 tracker 0.38, 0.22, 0.28, 0.27 mm to 0.25,
 0.44, 0.12, 0.12; the 2018 tracker 0.41, 0.27, 0.37, 0.33 to 0.37, 0.27, 0.30, 0.26. Moving, the output
 is within 1.3 ms of before (the shift that best explains the difference, at 0.3-3 m/s). What it can't do:
 the pose still has to come from somewhere, and with the wobble out the rest of the light (the planes'
 difference, the frame's shape, the 1.0 stations) holds it less firmly than LH2 words would. Passing the
 headset's wobble to the others (it hears the real words) would take out about a fifth more; not built.
+
+What the follower cost the 2018 tracker (replays of six recordings, 1.0 hits at 0.5 mrad): good pose 99.9 to
+99.0 % lying still, 94.4 to 88.2 % carried about, jumps 0.4 to 5.8 a minute in a third. Two things in it did
+that, neither the taking out of the offset:
+
+- *The shared scatter.* What was left unsure of the wobble went onto the rotor's hits as scatter they share,
+  so a frame's mean counted for less: by 0.3 mrad while the wobble isn't followed (a fresh pose, thin light),
+  0.12-0.15 mrad while it is. A frame's mean is what holds a pose that little else lights, and the 2018
+  tracker is the device that is there: one rotor alone held it for 24-28 % of its time on sorted light in
+  three recordings, and a 1.0 station (4F45E949) is refused for it for stretches. Just after its first switch
+  to LH1 mode, with one rotor's 3-4 sensors a frame and a 1.0 station newly added, its IMU calibration ran
+  off (15 deg) and tracking reset: in 8 replays of 8 with the shared scatter (as it was, capped at 0.15 mrad,
+  with the offset left in, 1.0 hits at 0.49-0.52 mrad), 0 of 9 without. It gave no steadiness either: still jitter of the
+  3.0 tracker and the Knuckles 0.25, 0.23, 0.23 mm without the follower, 0.16, 0.11, 0.12 with it, 0.17,
+  0.12, 0.12 with the offset taken out and no shared scatter, 0.24, 0.22, 0.21 with the shared scatter
+  alone. The hits' weights now stay as they were.
+- *Frames of two hits.* Two sensors within 0.5 mrad of the median were enough for a frame's mean. Where a
+  device has 2-3 sensors a frame of a rotor, the hits sat 1-2 mrad apart and the means swung +-1 mrad from
+  frame to frame; following that, the tracker lying still slid 1 m and was lost for 2.6 s. Now three
+  (`direct::HitsInCommon`).
+
+After both (1.0 hits at 0.5 mrad; before the follower, with it as it was, now): the 2018 tracker lying still
+100.0, 99.0, 100.0 % and 0.32, 0.33, 0.29 mm; carried about 94.4, 88.2, 94.3 %; the third recording's jumps
+0.4, 5.8, 5.8 a minute (below). Still jitter of the others, the same three: 3.0 tracker 0.25, 0.16, 0.17 mm
+(0.19, 0.07, 0.08 and 0.19, 0.10, 0.11 in two more recordings, 0.25, 0.17, 0.22 in the one carried about);
+Knuckles 0.23, 0.11, 0.13 and 0.23, 0.12, 0.12 (0.23, 0.18, 0.14 and 0.19, 0.11, 0.15).
+
+Read the 2018 tracker's counts with care: they are decided at a few moments that go either way. Without the
+follower, 1.0 hits at 0.49 or 0.52 mrad instead of 0.5 lose the still recording's 100.0 % (99.3 %, the 1 m
+slide above), and 0.49 brings the third recording's 5.8 jumps a minute: there a watchdog reacquires on
+hits sorted to a rotor the tracker doesn't see (0.3-2.6 rad off the pose), 0.08 s earlier or later, and
+lands on those hits (a pose 6 m off for 6 s) or on a 1.0 station. At 0.5001 and 0.4999 mrad nothing
+changes, so it isn't noise in the replay, but a change that moves the pose by a hair can flip them. Two
+Knuckles shaken hard, with a 1.0 station 17-20 cm off in the map: the left one 99.9 % at 0.5 mrad, 92.5 %
+at 0.501, with or without the follower.
+
+Tried and not kept: counting, for how well the pose is known, only what the filter knows from other light
+than the rotor's own (its variance there is mostly from the very hits the offset comes out of, and the
+follower does take about nine tenths of an offset that stays, not only the wobble: its value followed -1.7
+mrad for seconds). It settled none of the 2018 tracker's moments (the third recording's jumps 0.4 a minute at
+0.5 mrad but 5.8 at 0.49, where the still recording also fell to 99.2 %) and gave back a third of the
+others' steadiness (0.17, 0.13, 0.12 mm to 0.19, 0.17, 0.15).
 
 **LH2 mode while the 2.0 light is enough** (`MixedLightOptions::preferLh2`, "use the 1.0 stations only while
 the 2.0 stations don't light a device well", a test, off; `runtime::ChooseMixedLight`). A replay

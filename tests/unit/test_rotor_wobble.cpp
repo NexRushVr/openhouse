@@ -5,6 +5,7 @@
 
 #include "tracking/rotor_wobble.hpp"
 
+using lh::direct::HitsInCommon;
 using lh::direct::RotorWobble;
 
 namespace {
@@ -71,4 +72,25 @@ TEST(RotorWobble, AFrameFarOffIsNotAWobble) {
   EXPECT_FALSE(w.Update(3e-3, 0.02e-3 * 0.02e-3, kNoise));
   EXPECT_EQ(w.value, 0);
   EXPECT_DOUBLE_EQ(w.variance, kSpread * kSpread);
+}
+
+TEST(RotorWobble, AFramesMeanNeedsThreeHitsThatAgree) {
+  // Two sensors agree by chance: nothing to follow.
+  EXPECT_TRUE(HitsInCommon({}).empty());
+  EXPECT_TRUE(HitsInCommon({0.2e-3}).empty());
+  EXPECT_TRUE(HitsInCommon({0.2e-3, 0.25e-3}).empty());
+  EXPECT_EQ(HitsInCommon({0.2e-3, 0.25e-3, 0.15e-3}).size(), 3u);
+}
+
+TEST(RotorWobble, HitsFarFromTheRestAreLeftOutOfTheMean) {
+  // The fourth is 2 mrad from the others: another station's hit or a reflection.
+  const auto hits = HitsInCommon({0.2e-3, 2.2e-3, 0.25e-3, 0.15e-3});
+  ASSERT_EQ(hits.size(), 3u);
+  EXPECT_EQ(hits[0], 0u);
+  EXPECT_EQ(hits[1], 2u);
+  EXPECT_EQ(hits[2], 3u);
+  // Thin, poor light: three hits, but only two within 0.5 mrad of the median.
+  EXPECT_TRUE(HitsInCommon({-1.1e-3, 0.1e-3, 0.3e-3}).empty());
+  // Far off all alike is still a frame's mean (RotorWobble::Update decides whether it's a wobble).
+  EXPECT_EQ(HitsInCommon({3.0e-3, 3.1e-3, 2.9e-3, 3.2e-3}).size(), 4u);
 }
