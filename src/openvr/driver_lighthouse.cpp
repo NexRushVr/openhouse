@@ -21,7 +21,6 @@
 #include <openvr_driver.h>
 
 #include <Eigen/Geometry>
-#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -30,7 +29,6 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -180,46 +178,6 @@ std::string HostName() {
   std::getline(comm, name);
   return name;
 #endif
-}
-
-uint64_t ReadActiveChaperoneUniverse(const std::string& preferredRoomId = "") {
-  std::vector<std::string> paths = {
-    lh::platform::SteamRoot() + "/config/chaperone_info.vrchap",
-    lh::platform::SteamConfigDirectory() + "/../chaperone_info.vrchap",
-    "C:/Program Files (x86)/Steam/config/chaperone_info.vrchap"
-  };
-  for (const auto& chapPath : paths) {
-    std::ifstream f(chapPath);
-    if (!f) continue;
-    try {
-      const auto j = nlohmann::json::parse(f, nullptr, false);
-      if (!j.is_object() || !j.contains("universes")) continue;
-      const auto& universes = j["universes"];
-      if (!universes.is_array() || universes.empty()) continue;
-
-      if (!preferredRoomId.empty()) {
-        for (const auto& u : universes) {
-          if (u.contains("universeID")) {
-            std::string uid;
-            const auto& idVal = u["universeID"];
-            if (idVal.is_string()) uid = idVal.get<std::string>();
-            else if (idVal.is_number_unsigned()) uid = std::to_string(idVal.get<uint64_t>());
-            if (!uid.empty() && preferredRoomId.find(uid) != std::string::npos) {
-              return std::strtoull(uid.c_str(), nullptr, 10);
-            }
-          }
-        }
-      }
-
-      const auto& last = universes.back();
-      if (last.contains("universeID")) {
-        const auto& idVal = last["universeID"];
-        if (idVal.is_string()) return std::strtoull(idVal.get<std::string>().c_str(), nullptr, 10);
-        if (idVal.is_number_unsigned()) return idVal.get<uint64_t>();
-      }
-    } catch (...) {}
-  }
-  return 0;
 }
 
 uint64_t UniverseId(const std::string& roomId) {
@@ -385,19 +343,13 @@ class Device : public ITrackedDeviceServerDriver {
       p.vecVelocity[i] = pose.velocity[size_t(i)];
       p.vecAcceleration[i] = pose.acceleration[size_t(i)];  // SteamVR predicts with it (swings curve)
     }
-    // Prevent MVN Studio freeze/skip detection on identical float64 X coordinates when still
-    if (pose.valid) {
-      static uint64_t jitterCounter = 0;
-      const double jitter = ((++jitterCounter & 1) ? 1e-9 : -1e-9);
-      p.vecPosition[0] += jitter;
-    }
     // Angular velocity in the device (IMU) frame, as the stock driver reports it.
     const auto& o = pose.worldFromImu.orientation;
     const Eigen::Quaterniond q(o[0], o[1], o[2], o[3]);
     const Eigen::Vector3d w = q.conjugate() * Eigen::Vector3d(pose.angularVelocity[0], pose.angularVelocity[1],
                                                              pose.angularVelocity[2]);
     for (int i = 0; i < 3; ++i) p.vecAngularVelocity[i] = w[i];
-    p.poseTimeOffset = 0.0;
+    p.poseTimeOffset = pose.valid ? std::min(0.0, pose.hostTime - now) : 0.0;
     p.result = static_cast<ETrackingResult>(int(pose.result));
     p.poseIsValid = pose.valid;
     p.deviceIsConnected = u.connected && u.enabled;
@@ -882,13 +834,14 @@ class Provider : public IServerTrackedDeviceProvider {
     lh::SessionOptions options;
     if (const char* replay = std::getenv("LH_REPLAY")) options.replayPath = replay;
     if (const char* room = std::getenv("LH_ROOM_MAP")) options.roomMapPath = room;
-    // Import SteamVR's lighthousedb.json by default for immediate base poses and room alignment.
-    // LH_STEAM_DB=- disables it.
-    options.steamDatabasePath = "";
+    // Our room map is the only source of base poses: SteamVR's rooms are imported only
+    // on request (LH_STEAM_DB=auto or a path), and the host frame is ours unless
+    // LH_HOST_FRAME=steamvr pins it to lighthousedb.json's anchor.
+    options.steamDatabasePath = "-";
     if (const char* db = std::getenv("LH_STEAM_DB"); db && *db)
       options.steamDatabasePath = std::string(db) == "auto" ? "" : db;
     const char* hostFrame = std::getenv("LH_HOST_FRAME");
-    steamFrame_ = !(hostFrame && std::string(hostFrame) == "openhouse");
+    steamFrame_ = hostFrame && std::string(hostFrame) == "steamvr";
     std::string captureDir;
     // Or "capture" in steamvr.vrsettings under driver_lighthouse (or driver_openhouse): on
     // Windows a new environment variable reaches SteamVR only after Steam restarts.
@@ -1190,8 +1143,7 @@ class Provider : public IServerTrackedDeviceProvider {
           warnedRoom_ = snapshot_.roomId;
           Log("no shared reference base for room " + snapshot_.roomId + "; host room setup is required for a standing origin");
         }
-        uint64_t universe = ReadActiveChaperoneUniverse(snapshot_.roomId);
-        if (universe == 0) universe = UniverseId(aligned && steamFrame_ ? alignment_.RoomId() : snapshot_.roomId);
+        const uint64_t universe = UniverseId(aligned && steamFrame_ ? alignment_.RoomId() : snapshot_.roomId);
         roomPublisher_.Publish(snapshot_, rawFromWorld, now, session_->RoomResets());
         if (const std::string line = roomPublisher_.TakeLog(); !line.empty()) Log(line);
         for (auto& [serial, d] : devices_) {
@@ -1285,23 +1237,14 @@ class Provider : public IServerTrackedDeviceProvider {
       info.role = lh::DeviceRole::BaseStation;
       info.baseChannel = b.channel;
       info.lh2 = b.lh2;
-      Device* raw = Add(info, TrackedDeviceClass_TrackingReference, false);
-      if (raw) {
-        raw->UpdateBase(b);
-        NotifyAdded(info, TrackedDeviceClass_TrackingReference, raw);
-      }
+      Add(info, TrackedDeviceClass_TrackingReference);
     }
   }
 
-  Device* Add(const DeviceStatic& info, ETrackedDeviceClass cls, bool notifyHost = true) {
+  void Add(const DeviceStatic& info, ETrackedDeviceClass cls) {
     auto device = std::make_unique<Device>(info);
     Device* raw = device.get();
     devices_[info.serial] = std::move(device);
-    if (notifyHost) NotifyAdded(info, cls, raw);
-    return raw;
-  }
-
-  void NotifyAdded(const DeviceStatic& info, ETrackedDeviceClass cls, Device* raw) {
     // The host may call Activate() from inside this call (Monado does).
     if (!VRServerDriverHost()->TrackedDeviceAdded(info.serial.c_str(), cls, raw))
       Log("host declined " + info.serial + (cls == TrackedDeviceClass_TrackingReference ? " (base station)" : ""));
