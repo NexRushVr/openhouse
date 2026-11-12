@@ -769,6 +769,10 @@ void SessionImpl::UpdatePreinit(const DeviceId& id, const std::string& config) {
 void SessionImpl::OnDeviceDetached(const DeviceId& id) {
   std::lock_guard lock(mutex_);
   Tick();
+  // Free the receiver that was carrying this device. SteamVR asks which dongles are still
+  // occupied before it offers a pairing, and a stale "connected" there means the dongle looks
+  // busy until the receiver is physically unplugged.
+  if (usb_) usb_->OnDeviceGone(id);
   auto found = devices_.find(id);
   if (found == devices_.end()) return;
   found->second.attached = false;

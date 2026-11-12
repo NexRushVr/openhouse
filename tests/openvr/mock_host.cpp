@@ -4,8 +4,10 @@
 // Runs the driver on a replayed capture (LH_REPLAY) and checks what a host sees.
 #ifdef _WIN32
 #include <windows.h>
+#include <process.h>
 #else
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 #include <openvr_driver.h>
 
@@ -317,6 +319,26 @@ int main(int argc, char** argv) {
     setenv("LH_REPLAY", argv[2], 1);
 #endif
   }
+  // Keep the driver's room map, host frame and SteamVR files out of the real config
+  // directory: a test run wrote its rooms into the user's hostframe.json.
+  const auto scratch = std::filesystem::temp_directory_path() / ("lh_mock_host_" + std::to_string(
+#ifdef _WIN32
+      _getpid()
+#else
+      getpid()
+#endif
+      ));
+  std::filesystem::create_directories(scratch);
+  const auto setDefault = [](const char* name, const std::string& value) {
+    if (std::getenv(name)) return;
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+  };
+  setDefault("LH_ROOM_MAP", (scratch / "roommap.json").string());
+  setDefault("LH_REFERENCE_DB", (scratch / "lighthousedb.json").string());
   const double seconds = argc > 3 ? std::atof(argv[3]) : 12;
   using Factory = void* (*)(const char*, int*);
 #ifdef _WIN32

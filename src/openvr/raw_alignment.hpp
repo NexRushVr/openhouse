@@ -4,10 +4,11 @@
 
 namespace lh::openvr {
 // Keep the host's raw/chaperone frame distinct from our optimizable room frame.
-// Align through one shared physical base; never rewrite the host's room files.
+// Align through one shared physical base; never rewrite SteamVR's own universes.
 class RawAlignment {
  public:
   bool Load(const std::string& path, std::string* error);
+  bool LoadText(const std::string& lighthousedb, std::string* error);  // a lighthousedb.json's text
   bool Update(const SessionSnapshot& snapshot);
   const Eigen::Isometry3d& RawFromWorld() const { return rawFromWorld_; }
   const std::string& RoomId() const { return roomId_; }

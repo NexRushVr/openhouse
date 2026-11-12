@@ -36,6 +36,12 @@
                 "show_without_hmd": true
             },
             {
+                "name": "/settings/driver_openhouse/useSteamVRRooms",
+                "control": "toggle",
+                "label": "Use SteamVR's rooms (keeps Room Setup working; restart SteamVR after changing)",
+                "show_without_hmd": true
+            },
+            {
                 "name": "/settings/driver_openhouse/record",
                 "control": "toggle",
                 "label": "Record Session (disable to save)",

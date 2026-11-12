@@ -262,7 +262,7 @@ void RemoveSchema(const Paths& p) {
 // own file: without our section every toggle reset to off and every number to 0. One line
 // is added after its opening brace and removed again on uninstall; the rest stays SteamVR's.
 constexpr const char* kDefaultsLine =
-    R"("driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "hideLostDevices": false, "record": false, "resetRoom": false, "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true, "mixedLightPreferLh2": false },)";
+    R"("driver_openhouse": { "predictWithAcceleration": true, "positionSmoothingMs": 60, "rotationSmoothingMs": 60, "hideLostDevices": false, "useSteamVRRooms": true, "record": false, "resetRoom": false, "mixedLight": false, "mixedLightControllers": true, "mixedLightTrackers": true, "mixedLightScout": true, "mixedLightPreferLh2": false },)";
 
 void RemoveDefaults(const Paths& p);
 

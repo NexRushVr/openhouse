@@ -21,6 +21,7 @@
 #include <openvr_driver.h>
 
 #include <Eigen/Geometry>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -50,6 +51,7 @@ constexpr const char* kStockFile = "driver_lighthouse.so.stock";
 #include "lh/session.hpp"
 #include "hand_skeleton.hpp"
 #include "raw_alignment.hpp"
+#include "steam_rooms.hpp"
 #include "room_publisher.hpp"
 #include "telemetry_server.hpp"
 #include "lh/log_level.hpp"
@@ -63,6 +65,7 @@ constexpr const char* kStockFile = "driver_lighthouse.so.stock";
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -826,22 +829,35 @@ class Provider : public IServerTrackedDeviceProvider {
     lh::SessionOptions options;
     if (const char* replay = std::getenv("LH_REPLAY")) options.replayPath = replay;
     if (const char* room = std::getenv("LH_ROOM_MAP")) options.roomMapPath = room;
-    // Our room map is the only source of base poses: SteamVR's rooms are imported only
-    // on request (LH_STEAM_DB=auto or a path), and the host frame is ours unless
-    // LH_HOST_FRAME=steamvr pins it to lighthousedb.json's anchor.
-    options.steamDatabasePath = "-";
+    // SteamVR's rooms (steam_rooms.hpp, #82): under SteamVR, by default, SteamVR's rooms are
+    // imported, a room SteamVR already has Room Setup for uses that universe and its frame,
+    // and our other rooms are written into lighthousedb.json as universes of their own.
+    // Off ("Use SteamVR's rooms" on the settings page, LH_HOST_FRAME=openhouse, other
+    // hosts): our room map is the only source of base poses and the host frame is ours.
+    // LH_HOST_FRAME=steamvr pins the host frame to lighthousedb.json's anchor in any room.
+    const bool steamvrHost = HostName().rfind("vrserver", 0) == 0;
+    const char* hostFrame = std::getenv("LH_HOST_FRAME");
+    const std::string hostFrameMode = hostFrame ? hostFrame : "";
+    steamFrame_ = hostFrameMode == "steamvr";
+    steamRooms_ = false;
+    if (steamvrHost && hostFrameMode.empty() && VRSettings()) {
+      EVRSettingsError e = VRSettingsError_None;
+      const bool on = VRSettings()->GetBool("driver_openhouse", "useSteamVRRooms", &e);
+      steamRooms_ = e != VRSettingsError_None || on;  // no value yet: on
+    }
+    if (const char* force = std::getenv("LH_STEAMVR_ROOMS"); force && *force && hostFrameMode.empty())
+      steamRooms_ = std::string(force) == "1";  // any host (tests)
+    replay_ = !options.replayPath.empty();
+    options.steamDatabasePath = steamRooms_ ? "" : "-";
     if (const char* db = std::getenv("LH_STEAM_DB"); db && *db)
       options.steamDatabasePath = std::string(db) == "auto" ? "" : db;
-    const char* hostFrame = std::getenv("LH_HOST_FRAME");
-    steamFrame_ = hostFrame && std::string(hostFrame) == "steamvr";
     std::string captureDir;
     // Or "capture" in steamvr.vrsettings under driver_lighthouse (or driver_openhouse): on
     // Windows a new environment variable reaches SteamVR only after Steam restarts.
     // SteamVR only: older Monado's steamvr_lh (Envision's) aborts on a GetString of a
     // key missing from default.vrsettings, and Monado/WiVRn see LH_CAPTURE anyway.
     std::string captureSetting;
-    const bool steamvr = HostName().rfind("vrserver", 0) == 0;
-    if (steamvr) for (const char* section : {"driver_lighthouse", "driver_openhouse"}) {
+    if (steamvrHost) for (const char* section : {"driver_lighthouse", "driver_openhouse"}) {
       char value[1024]{};
       VRSettings()->GetString(section, "capture", value, sizeof value);
       if (*value) { captureSetting = value; break; }
@@ -867,6 +883,27 @@ class Provider : public IServerTrackedDeviceProvider {
     else reference = lh::platform::SteamConfigDirectory() + "/lighthousedb.json";
     std::string alignmentError;
     if (steamFrame_ && !reference.empty() && !alignment_.Load(reference, &alignmentError)) Log(alignmentError);
+    if (steamRooms_) {
+      referencePath_ = reference;
+      std::string text;
+      {
+        std::ifstream f(std::filesystem::u8path(reference), std::ios::binary);
+        std::ostringstream all;
+        if (f) all << f.rdbuf();
+        text = all.str();
+      }
+      std::string chaperone = lh::platform::SteamRoot() + "/config/chaperone_info.vrchap";
+      if (const char* p = std::getenv("LH_CHAPERONE")) chaperone = p;
+      const auto setUp = lh::openvr::ChaperoneUniverses(chaperone);
+      // SteamVR's universes (an imported room stays in its own), and those with Room Setup.
+      if (!text.empty()) {
+        if (!alignment_.LoadText(lh::openvr::ForeignUniverses(text, AllUniverseIds(text)), &alignmentError)) Log(alignmentError);
+        if (!setUpAlignment_.LoadText(lh::openvr::ForeignUniverses(text, setUp), &alignmentError)) Log(alignmentError);
+      }
+      std::string ids;
+      for (const auto& id : setUp) ids += (ids.empty() ? "" : ", ") + id;
+      Log("SteamVR's rooms: on (" + reference + "; Room Setup done for " + (ids.empty() ? std::string("no universe") : ids) + ")");
+    }
     if (!steamFrame_) {
       const std::string roomMap = options.roomMapPath.empty() ? lh::platform::ConfigDirectory() + "/roommap.json"
                                                               : options.roomMapPath;
@@ -987,6 +1024,10 @@ class Provider : public IServerTrackedDeviceProvider {
     devices_.clear();
     snapshot_ = {};
     alignment_ = {};
+    setUpAlignment_ = {};
+    roomFrame_ = {};
+    writtenUniverse_.clear();
+    lastUniverseWrite_ = -1e300;
     roomPublisher_.Close();
     warnedRoom_.clear();
     lastSnapshot_ = -1e300;
@@ -1129,13 +1170,19 @@ class Provider : public IServerTrackedDeviceProvider {
           stock_.OwnPose(hmd->objectId);
           Log("head-mounted display " + hmd->serial + ": pose from our tracking");
         }
-        const bool aligned = steamFrame_ ? alignment_.Update(snapshot_) : !snapshot_.roomId.empty();
-        const Eigen::Isometry3d rawFromWorld = steamFrame_ ? alignment_.RawFromWorld() : hostFrame_.Update(snapshot_, now);
-        if (steamFrame_ && !aligned && !snapshot_.roomId.empty() && snapshot_.roomId != warnedRoom_) {
-          warnedRoom_ = snapshot_.roomId;
-          Log("no shared reference base for room " + snapshot_.roomId + "; host room setup is required for a standing origin");
+        Eigen::Isometry3d rawFromWorld;
+        uint64_t universe = 0;
+        if (steamRooms_) {
+          SteamRoomFrame(now, &rawFromWorld, &universe);
+        } else {
+          const bool aligned = steamFrame_ ? alignment_.Update(snapshot_) : !snapshot_.roomId.empty();
+          rawFromWorld = steamFrame_ ? alignment_.RawFromWorld() : hostFrame_.Update(snapshot_, now);
+          if (steamFrame_ && !aligned && !snapshot_.roomId.empty() && snapshot_.roomId != warnedRoom_) {
+            warnedRoom_ = snapshot_.roomId;
+            Log("no shared reference base for room " + snapshot_.roomId + "; host room setup is required for a standing origin");
+          }
+          universe = UniverseId(aligned && steamFrame_ ? alignment_.RoomId() : snapshot_.roomId);
         }
-        const uint64_t universe = UniverseId(aligned && steamFrame_ ? alignment_.RoomId() : snapshot_.roomId);
         roomPublisher_.Publish(snapshot_, rawFromWorld, now, session_->RoomResets());
         if (const std::string line = roomPublisher_.TakeLog(); !line.empty()) Log(line);
         for (auto& [serial, d] : devices_) {
@@ -1285,6 +1332,113 @@ class Provider : public IServerTrackedDeviceProvider {
   lh::SessionSnapshot snapshot_;
   lh::openvr::RawAlignment alignment_;
   bool steamFrame_ = false;
+  // SteamVR's rooms (steam_rooms.hpp): the frame and universe of the active room.
+  bool steamRooms_ = false;
+  bool replay_ = false;
+  std::string referencePath_;
+  lh::openvr::RawAlignment setUpAlignment_;  // SteamVR's universes with Room Setup done
+  enum class RoomFrame { Undecided, Steam, Own };
+  struct {
+    std::string room;
+    RoomFrame frame = RoomFrame::Undecided;
+    double since = 0;
+    Eigen::Isometry3d rawFromWorld = Eigen::Isometry3d::Identity();
+    uint64_t universe = 0;
+  } roomFrame_;
+  std::string writtenUniverse_;  // what we last wrote into lighthousedb.json
+  double lastUniverseWrite_ = -1e300;
+
+  static std::set<std::string> AllUniverseIds(const std::string& lighthousedb) {
+    std::set<std::string> ids;
+    const auto j = nlohmann::json::parse(lighthousedb, nullptr, false);
+    if (!j.is_object() || !j.contains("known_universes") || !j.at("known_universes").is_array()) return ids;
+    for (const auto& u : j.at("known_universes")) {
+      if (!u.is_object() || !u.contains("id")) continue;
+      const auto& id = u.at("id");
+      if (id.is_string()) ids.insert(id.get<std::string>());
+      else if (id.is_number_unsigned()) ids.insert(std::to_string(id.get<uint64_t>()));
+    }
+    return ids;
+  }
+
+  // The host frame and universe under SteamVR's rooms. A room imported from SteamVR
+  // ("steamvr-<id>") stays in that universe's frame. One of ours takes a SteamVR universe
+  // that has Room Setup and shares a base with it (decided within the room's first 5 s,
+  // then kept for the session: a frame never switches under the user); otherwise it is
+  // its own universe, in our pinned host frame, written into lighthousedb.json.
+  void SteamRoomFrame(double now, Eigen::Isometry3d* rawFromWorld, uint64_t* universe) {
+    auto& f = roomFrame_;
+    if (snapshot_.roomId != f.room) f = {snapshot_.roomId, RoomFrame::Undecided, now, Eigen::Isometry3d::Identity(), 0};
+    const bool imported = f.room.rfind("steamvr-", 0) == 0;
+    if (f.room.empty()) {
+      *rawFromWorld = hostFrame_.Update(snapshot_, now);
+      *universe = 0;
+      return;
+    }
+    auto& steam = imported ? alignment_ : setUpAlignment_;
+    if (f.frame != RoomFrame::Own && steam.Update(snapshot_)) {
+      if (f.frame == RoomFrame::Undecided)
+        Log("room " + f.room + ": SteamVR's universe " + steam.RoomId().substr(8) +
+            (imported ? "" : " (Room Setup from SteamVR)") + ", in SteamVR's frame");
+      f.frame = RoomFrame::Steam;
+      f.rawFromWorld = steam.RawFromWorld();
+      f.universe = UniverseId(steam.RoomId());
+    } else if (f.frame == RoomFrame::Undecided && !imported && now - f.since > 5) {
+      f.frame = RoomFrame::Own;
+      Log("room " + f.room + ": its own universe " + std::to_string(UniverseId(f.room)) +
+          " (no SteamVR room with Room Setup shares a base station)");
+    }
+    if (f.frame == RoomFrame::Steam) {  // the last alignment holds while its anchor is out
+      *rawFromWorld = f.rawFromWorld;
+      *universe = f.universe;
+    } else if (f.frame == RoomFrame::Own) {
+      *rawFromWorld = hostFrame_.Update(snapshot_, now);
+      *universe = UniverseId(f.room);
+      WriteOwnUniverse(now, *rawFromWorld);
+    } else {
+      *rawFromWorld = hostFrame_.Update(snapshot_, now);
+      *universe = 0;  // until decided: no universe to set up (SteamVR waits for one)
+    }
+  }
+
+  // Our room as a lighthousedb.json universe: its learned bases where the host frame has
+  // them. Rewritten when a base is learned or moves 1 cm / 1 deg, at most every 30 s.
+  void WriteOwnUniverse(double now, const Eigen::Isometry3d& rawFromWorld) {
+    // A replay writes only into a file it was given (LH_REFERENCE_DB), never SteamVR's.
+    if ((replay_ && !std::getenv("LH_REFERENCE_DB")) || referencePath_.empty() || !hostFrame_.Anchored() || now - lastUniverseWrite_ < 30) return;
+    std::vector<lh::openvr::UniverseBase> bases;
+    std::string key = roomFrame_.room;
+    for (const auto& b : snapshot_.bases) {
+      if (!b.known || !b.learned) continue;
+      const auto& p = b.worldFromBase;
+      Eigen::Isometry3d worldFromBase = Eigen::Isometry3d::Identity();
+      worldFromBase.linear() = Eigen::Quaterniond(p.orientation[0], p.orientation[1], p.orientation[2], p.orientation[3]).normalized().toRotationMatrix();
+      worldFromBase.translation() = Eigen::Vector3d(p.position.data());
+      lh::openvr::UniverseBase u;
+      u.serial = b.id;
+      u.rawFromBase = rawFromWorld * worldFromBase;
+      u.variance = b.sigma * b.sigma;
+      bases.push_back(u);
+      const Eigen::Vector3d t = u.rawFromBase.translation() * 100;  // cm
+      const Eigen::Vector3d r = Eigen::AngleAxisd(u.rawFromBase.rotation()).axis() *
+                                Eigen::AngleAxisd(u.rawFromBase.rotation()).angle() * 57.29577951308232;
+      char text[160];
+      std::snprintf(text, sizeof text, " %08X:%.0f,%.0f,%.0f:%.0f,%.0f,%.0f", b.id, t.x(), t.y(), t.z(), r.x(), r.y(), r.z());
+      key += text;
+    }
+    if (bases.empty() || key == writtenUniverse_) return;
+    lastUniverseWrite_ = now;
+    std::string error;
+    const std::string id = std::to_string(UniverseId(roomFrame_.room));
+    if (lh::openvr::WriteUniverse(referencePath_, id, bases, &error)) {
+      if (writtenUniverse_.empty())
+        Log("room " + roomFrame_.room + " written into " + referencePath_ + " as universe " + id + " (" +
+            std::to_string(bases.size()) + " bases)");
+      writtenUniverse_ = key;
+    } else {
+      Log(lh::LogLevel::Warn, error);
+    }
+  }
   lh::openvr::HostFrame hostFrame_;
   lh::openvr::RoomPublisher roomPublisher_;
   std::string warnedRoom_;

@@ -9,10 +9,13 @@ bool RawAlignment::Load(const std::string& path, std::string* error) {
   std::ifstream f(path);
   if (!f) { if (error) *error = "cannot open reference room " + path; return false; }
   std::ostringstream text; text << f.rdbuf();
+  return LoadText(text.str(), error);
+}
+bool RawAlignment::LoadText(const std::string& lighthousedb, std::string* error) {
   reference_ = {};
   anchor_ = 0; roomId_.clear(); rawFromWorld_.setIdentity();
   levelDecided_ = false; levelFix_.setIdentity();
-  return reference_.ImportSteamDatabase(text.str(), error);
+  return reference_.ImportSteamDatabase(lighthousedb, error);
 }
 bool RawAlignment::Update(const SessionSnapshot& snapshot) {
   // Select the reference universe using observed base IDs, not a made-up room ID.
