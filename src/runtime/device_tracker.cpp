@@ -1,4 +1,5 @@
 #include "device_tracker.hpp"
+#include "mixed_light.hpp"
 
 #include "tracking/lighthouse_model.hpp"
 
@@ -7,6 +8,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <limits>
 
 namespace lh::runtime {
 namespace {
@@ -65,7 +67,7 @@ void DeviceTracker::ResetFilter() {
   predictOutput_ = smoothOutput_ = holdStill_ = !stock;
   inertialLag_ = stock ? 0.02 : 0.12;
   if (!stock) filter_->SetImprovements(true, kGateSigma, true);
-  filter_->SetMixedLightScatter(mixedScatter_.first, mixedScatter_.second);
+  filter_->SetMixedLightScatter(mixedScatter_[0], mixedScatter_[1], mixedScatter_[2], mixedScatter_[3]);
   for (const auto& [serial, base] : bases_) filter_->OnBaseConfig(base.first, base.second);
   roomRevision_ = ~uint64_t{0};
   calibratedLogged_ = false;
@@ -130,8 +132,81 @@ void DeviceTracker::Process(std::vector<std::pair<BaseConfig, BaseDynamicState>>
   UpdateOutput();
 }
 
-void DeviceTracker::HandleFrame(const OpticalFrame& original) {
-  const OpticalFrame& frame = original;
+// runtime::ForeignSweeps on a 1.0 frame: each sample against where the pose puts the frame's station's sweep.
+void DeviceTracker::DropForeignSweeps(OpticalFrame* f) {
+  constexpr double kTwoPi = 6.283185307179586;
+  std::vector<size_t> order(f->samples.size());
+  for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return f->samples[a].time < f->samples[b].time; });
+  std::vector<runtime::SweepSample> sweep;
+  sweep.reserve(order.size());
+  for (const size_t i : order) {
+    const OpticalSample& s = f->samples[i];
+    runtime::SweepSample x;
+    x.time = s.time;
+    ExpectedHit expected[PulseSorter::kMaxExpected];
+    const int n = filter_->ExpectedHits(s.sensor, s.time + 0.5 * s.width, expected);
+    for (int k = 0; k < n; ++k)
+      if (!expected[k].lh2 && expected[k].base == f->baseSerial && expected[k].axis == f->axis) {
+        x.residual = std::remainder(s.angle - expected[k].angle, kTwoPi);
+        x.judged = true;
+      }
+    sweep.push_back(x);
+  }
+  const std::vector<bool> drop = runtime::ForeignSweeps(sweep);
+  std::vector<bool> dropSample(f->samples.size(), false);
+  size_t dropped = 0;
+  for (size_t j = 0; j < order.size(); ++j)
+    if (drop[j]) dropSample[order[j]] = true, ++dropped;
+  if (!dropped) return;
+  std::vector<OpticalSample> kept;
+  kept.reserve(f->samples.size() - dropped);
+  for (size_t i = 0; i < f->samples.size(); ++i)
+    if (!dropSample[i]) kept.push_back(f->samples[i]);
+  f->samples = std::move(kept);
+  foreignSweepSamples_ += dropped;
+}
+
+void DeviceTracker::HandleFrame(const OpticalFrame& incoming) {
+  // Not stock (runtime/rotor_reference.hpp): sorted 2.0 hits less their rotor's offset, where a device in
+  // LH2 mode measures it at that moment.
+  OpticalFrame referenced;
+  const OpticalFrame* in = &incoming;
+  if (incoming.baseSerial &&
+      std::any_of(incoming.samples.begin(), incoming.samples.end(), [](const OpticalSample& s) { return (s.flags2 & kSampleSorted) != 0; })) {
+    ++sortedFrames_;
+    double time = std::numeric_limits<double>::infinity();
+    for (const auto& s : incoming.samples) time = std::min(time, s.time + 0.5 * s.width);
+    double radians = 0;
+    if (rotorOffset_ && rotorOffset_(incoming.baseSerial, time, &radians)) {
+      referenced = incoming;
+      for (auto& s : referenced.samples)
+        if (s.flags2 & kSampleSorted) {
+          s.angle -= radians;
+          s.flags2 |= kSampleReferenced;
+        }
+      in = &referenced;
+      ++referencedFrames_;
+    }
+    if (sortedFrames_ % 6000 == 0 && referencedFrames_ > 0) {
+      char text[112];
+      std::snprintf(text, sizeof text, "rotor reference: %.0f %% of %llu frames of sorted hits corrected so far",
+                    100.0 * double(referencedFrames_) / double(sortedFrames_), static_cast<unsigned long long>(sortedFrames_));
+      Log(text);
+    }
+  }
+  const OpticalFrame& original = *in;
+  // A 1.0 frame (only those have a sync width class) while 2.0 light is about: 2.0 sweeps out first, while
+  // the device turns slowly enough for its pose to judge them (runtime::kSweepMaxTurn).
+  OpticalFrame checked;
+  const auto& x = filter_->Filter().x;
+  const bool check = lh1SweepCheck_ && original.nominalSyncWidth > 0 && filter_->Bootstrapped() &&
+                     Eigen::Vector3d(x[13], x[14], x[15]).norm() < runtime::kSweepMaxTurn;
+  if (check) {
+    checked = original;
+    DropForeignSweeps(&checked);
+  }
+  const OpticalFrame& frame = check ? checked : original;
   const bool wasTracking = filter_->Bootstrapped();
 
   if (frame.baseSerial) lastFrame_[frame.baseSerial] = frame.syncTime;
@@ -172,25 +247,40 @@ void DeviceTracker::HandleFrame(const OpticalFrame& original) {
       // The room pose is a starting point, not a constraint: the filter keeps refining
       // the relative pose with its own measurements. Locking it to the room (tiny
       // variance) measurably increases pose jitter (see ai/driver/lh_runtime.md).
+      // With every slot taken, a base lighting three sensors or more takes a dark one's place (SlotToGiveUp).
+      uint32_t replaced = 0;
       if (filter_->AddKnownAltBase(frame.baseSerial, altFromPrimary,
                                    std::max(alt->positionVariance + primary->positionVariance, kAltPriorVariance),
-                                   std::max(alt->rotationVariance + primary->rotationVariance, kAltPriorVariance))) {
-        char text[96];
-        std::snprintf(text, sizeof text, "added base %08X from the room map", frame.baseSerial);
+                                   std::max(alt->rotationVariance + primary->rotationVariance, kAltPriorVariance),
+                                   frame.samples.size() >= 3, &replaced)) {
+        char text[128];
+        if (replaced)
+          std::snprintf(text, sizeof text, "added base %08X from the room map in place of %08X, which gave no light",
+                        frame.baseSerial, replaced);
+        else
+          std::snprintf(text, sizeof text, "added base %08X from the room map", frame.baseSerial);
         Log(text);
       }
     }
   }
   const int rejectsBefore = filter_->Filter().rejectCount;
   const double lastOpticalBefore = filter_->LastOpticalTime();
+  const double filterBefore = filter_->Time();
   filter_->OnFrame(frame);
   if (frame.baseSerial && wasTracking) {
     std::set<int> lit;
     for (const auto& s : frame.samples) if (s.sensor >= 0) lit.insert(s.sensor);
     if (lit.size() >= 4) {
       int& streak = rejectStreak_[{frame.baseSerial, frame.axis & 1}];
-      if (filter_->LastOpticalTime() == lastOpticalBefore) ++refusedLit_;
-      else refusedLit_ = 0;
+      // Light from before the time the IMU has carried the filter to is skipped unread, not
+      // refused: it says nothing about the pose. Switching LH1 -> LH2 mode, the last sorted frames
+      // came 0.17-0.31 s late, behind the filter, and the LH2 light only 0.5-1.5 s after the
+      // switch; counted, they restarted tracking 0.45 s in (live 2026-11-11: 12 of 45 switches,
+      // the device lost for 0.1-1.2 s). Now it coasts until the LH2 light comes.
+      double earliest = std::numeric_limits<double>::infinity();
+      for (const auto& s : frame.samples) earliest = std::min(earliest, s.time + 0.5 * s.width);
+      if (filter_->LastOpticalTime() != lastOpticalBefore) refusedLit_ = 0;
+      else if (earliest >= filterBefore) ++refusedLit_;
       if (filter_->Filter().rejectCount != rejectsBefore) {
         ++streak;
         // Say why the light is being refused, once per streak. Without this a log can
@@ -244,6 +334,8 @@ void DeviceTracker::HandleFrame(const OpticalFrame& original) {
 
 void DeviceTracker::CollectKeyframe(const OpticalFrame& frame) {
   if (!filter_->Bootstrapped() || frame.baseSerial == 0) { frameBuffer_.clear(); return; }
+  // An LH1 frame (only those have a sync width class) whose light may hold unsorted 2.0 sweeps.
+  if (frame.nominalSyncWidth > 0 && !lh1Keyframes_) { frameBuffer_.clear(); return; }
   const auto& f = filter_->Filter();
   const uint32_t primary = filter_->BaseSerial(0);
   if (f.updateCount < 110 || Now() - filter_->LastOpticalTime() > 0.05) { frameBuffer_.clear(); return; }

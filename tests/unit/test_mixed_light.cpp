@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 
 #include "runtime/mixed_light.hpp"
 
 using lh::runtime::ChooseMixedLight;
+using lh::runtime::Lh2Light;
+using lh::runtime::Lh2LightEnough;
 using lh::runtime::MixedLightStep;
 using lh::runtime::MixedLightView;
 
@@ -97,6 +100,119 @@ TEST(MixedLight, AVisitInDarknessEndsEarly) {
   EXPECT_EQ(Mode(v), 0);
   v.inMode = 2.0;  // the switch itself takes half a second
   v.dark = 2.0;
+  EXPECT_EQ(Mode(v), -1);
+}
+
+// MixedLightOptions::preferLh2: LH2 mode while the 2.0 stations light the device well.
+TEST(MixedLight, The2Point0StationsLightADeviceTogether) {
+  EXPECT_TRUE(Lh2LightEnough({{20, 4.0}}));               // one station, a pose by itself
+  EXPECT_FALSE(Lh2LightEnough({{19, 4.0}}));
+  EXPECT_TRUE(Lh2LightEnough({{40, 3.6}, {38, 3.7}}));    // a Knuckles lit by two, neither enough alone
+  EXPECT_TRUE(Lh2LightEnough({{25, 2.8}, {26, 3.1}}));    // the one lighting too few sensors left out
+  EXPECT_FALSE(Lh2LightEnough({{25, 2.8}, {25, 3.1}}));
+  EXPECT_FALSE(Lh2LightEnough({{40, 2.9}}));              // too few sensors a frame, however often
+  EXPECT_FALSE(Lh2LightEnough({{8, 9.0}, {20, 3.5}}));    // a station seen in a few frames isn't counted
+  EXPECT_FALSE(Lh2LightEnough({}));
+}
+
+TEST(MixedLight, PreferringLh2StaysThereWhileThe2Point0LightIsEnough) {
+  MixedLightView v = InLh2(2.5);
+  v.preferLh2 = true;
+  v.lh2Covered = 2.5;
+  EXPECT_EQ(Mode(v), -1);  // where it would have left with its rotors ready
+  v.inMode = v.lh2Covered = 600.0;
+  EXPECT_EQ(Mode(v), -1);
+  v.preferLh2 = false;
+  EXPECT_EQ(Mode(v), 0);
+}
+
+TEST(MixedLight, PreferringLh2LeavesWhenThe2Point0LightRunsShort) {
+  MixedLightView v = InLh2(600.0);
+  v.preferLh2 = true;
+  v.lh2Short = 0.1;
+  EXPECT_EQ(Mode(v), -1);  // a sweep or two missed
+  v.lh2Short = 0.25;
+  const MixedLightStep step = ChooseMixedLight(v, kVisits);
+  EXPECT_EQ(step.mode, 0);
+  EXPECT_EQ(std::string(step.why), "too little 2.0 light");
+  v.inMode = 1.0;
+  EXPECT_EQ(Mode(v), -1);  // but a visit still lasts long enough to hear a new rotor
+  v.inMode = 5.0;
+  v.learningRotors = 1;
+  EXPECT_EQ(Mode(v), -1);  // and to learn one
+}
+
+TEST(MixedLight, PreferringLh2StaysWhileARotorRelearns) {
+  MixedLightView v = InLh2(87.0);
+  v.preferLh2 = true;
+  v.lh2Covered = 87.0;
+  v.learningRotors = 1;
+  EXPECT_EQ(Mode(v), -1);  // the light is enough: it's learned here
+  v.learningRotors = 0;
+  v.unnamedRotors = 1;
+  EXPECT_EQ(Mode(v), -1);  // and a station named
+  v.lh2Covered = 0;
+  v.lh2Short = 0.25;
+  const MixedLightStep step = ChooseMixedLight(v, kVisits);
+  EXPECT_EQ(step.mode, 0);  // short of light: a visit's limits, as without preferLh2
+  EXPECT_EQ(std::string(step.why), "visit over");
+  v.unnamedRotors = 0;
+  v.learningRotors = 1;
+  v.lh2Covered = 87.0;
+  v.lh2Short = 0;
+  v.preferLh2 = false;
+  EXPECT_EQ(std::string(ChooseMixedLight(v, kVisits).why), "visit over");
+}
+
+TEST(MixedLight, PreferringLh2LeavesWhenLostOnThe2Point0LightAlone) {
+  MixedLightView v = InLh2(600.0);
+  v.preferLh2 = true;
+  v.tracking = false;
+  v.lh2Short = 0.6;
+  v.lost = 0.5;
+  EXPECT_EQ(Mode(v), -1);  // long enough to recover where it is
+  v.lost = 1.0;
+  const MixedLightStep step = ChooseMixedLight(v, kVisits);
+  EXPECT_EQ(step.mode, 0);
+  EXPECT_EQ(std::string(step.why), "lost on 2.0 light");
+  v.dark = 5.0;
+  v.lost = 0.5;
+  EXPECT_EQ(std::string(ChooseMixedLight(v, kVisits).why), "no 2.0 light");
+}
+
+TEST(MixedLight, PreferringLh2GoesBackOnceThe2Point0LightHasHeld) {
+  MixedLightView v = InLh1(30.0);
+  v.preferLh2 = true;
+  v.lh2Covered = 9.0;
+  EXPECT_EQ(Mode(v), -1);  // not held long enough
+  v.lh2Covered = 10.0;
+  const MixedLightStep step = ChooseMixedLight(v, kVisits);
+  EXPECT_EQ(step.mode, 1);
+  EXPECT_EQ(std::string(step.why), "2.0 light is enough");
+  v.calm = false;
+  EXPECT_EQ(Mode(v), -1);  // half a second without light: not while moving
+  v.calm = true;
+  v.inMode = 19.0;
+  EXPECT_EQ(Mode(v), -1);  // nor straight back: at most one such gap in 20 s
+  v.inMode = 30.0;
+  v.tracking = false;
+  EXPECT_EQ(Mode(v), -1);  // lost, the usual rule decides
+  v.tracking = true;
+  v.preferLh2 = false;
+  EXPECT_EQ(Mode(v), -1);  // off: only the visits
+}
+
+TEST(MixedLight, PreferringLh2WaitsForA2Point0StationToBePlaced) {
+  // LH2 mode gives no pose yet: staying there would leave the device blind.
+  MixedLightView v = InLh2(2.5);
+  v.preferLh2 = true;
+  v.lh2Covered = 2.5;
+  v.lh2Unplaced = true;
+  EXPECT_EQ(Mode(v), 0);
+  v = InLh1(30.0);
+  v.preferLh2 = true;
+  v.lh2Covered = 30.0;
+  v.lh2Unplaced = true;
   EXPECT_EQ(Mode(v), -1);
 }
 
@@ -370,4 +486,148 @@ TEST(MixedLight, InUseOnlyWithA2Point0StationToSort) {
   EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse) << "a 2.0 station seen this session: it's lit";
   v.lh2InRoom = false;
   EXPECT_EQ(ChooseMixedRoom(v), MixedRoomStep::InUse);
+}
+
+namespace {
+
+using lh::runtime::ChooseLightMode;
+using lh::runtime::LightModeView;
+
+// A device in a room with both kinds of station, both seen, 1.0 + 2.0 not in use.
+LightModeView InMixedRoom(int mode, double inMode, double dark) {
+  LightModeView v;
+  v.mode = mode;
+  v.inMode = inMode;
+  v.dark = dark;
+  v.knownLh1 = v.knownLh2 = v.seenLh1 = v.seenLh2 = true;
+  return v;
+}
+
+}  // namespace
+
+TEST(LightMode, StartsAsStock) {
+  LightModeView v;
+  v.knownLh1 = v.knownLh2 = true;
+  EXPECT_EQ(ChooseLightMode(v).mode, 0) << "a room with both kinds: LH1, the default";
+  v.knownLh1 = false;
+  EXPECT_EQ(ChooseLightMode(v).mode, 1) << "only 2.0 stations";
+}
+
+TEST(LightMode, TriesTheOtherModeWhenDarkWithout2Point0Light) {
+  LightModeView v = InMixedRoom(1, 3.7, 2.5);
+  EXPECT_EQ(ChooseLightMode(v).mode, 0) << "never sent 2.0 light: stock's choice";
+  v.everLh2 = true;
+  v.sinceLh2Light = 12;
+  EXPECT_EQ(ChooseLightMode(v).mode, 0) << "no 2.0 light from anyone for 12 s: they're off";
+}
+
+TEST(LightMode, StaysInLh2While2Point0StationsAreLit) {
+  // Live, 2026-11-11: dark 2.5 s just after the switch went off, while the tracker beside it had 2.0 light.
+  LightModeView v = InMixedRoom(1, 3.7, 2.5);
+  v.everLh2 = true;
+  v.sinceLh2Light = 0.5;
+  EXPECT_EQ(ChooseLightMode(v).mode, -1);
+  v.inMode = v.dark = 5.0;
+  const auto step = ChooseLightMode(v);
+  EXPECT_EQ(step.mode, 1);
+  EXPECT_EQ(std::string(step.why), "re-send");
+}
+
+TEST(LightMode, LeavesLh1While2Point0StationsAreLit) {
+  LightModeView v = InMixedRoom(0, 3.0, 0.0);  // tracking on the 1.0 light, which holds it there under stock
+  v.everLh2 = true;
+  v.sinceLh2Light = 0.1;
+  const auto step = ChooseLightMode(v);
+  EXPECT_EQ(step.mode, 1);
+  EXPECT_EQ(std::string(step.why), "2.0 stations lit");
+  v.inMode = 1.0;
+  EXPECT_EQ(ChooseLightMode(v).mode, -1) << "not straight after a change";
+  v.inMode = 3.0;
+  v.everLh2 = false;
+  EXPECT_EQ(ChooseLightMode(v).mode, -1) << "a device that never sent 2.0 light (a 1.0-only one) stays";
+}
+
+TEST(LightMode, OneKindSeenKeepsThatMode) {
+  LightModeView v = InMixedRoom(1, 3.0, 3.0);
+  v.seenLh2 = false;
+  EXPECT_EQ(ChooseLightMode(v).mode, 0) << "only 1.0 stations seen";
+  v.mode = 0;
+  EXPECT_EQ(ChooseLightMode(v).mode, -1);
+  v.inMode = 5.0;
+  EXPECT_EQ(ChooseLightMode(v).mode, 0) << "re-sent now and then";
+}
+
+TEST(Lh1Keyframes, AlwaysWithout2Point0Light) {
+  lh::runtime::Lh1KeyframeView v;  // a 1.0-only room: no beam word from anyone, ever
+  EXPECT_TRUE(lh::runtime::Lh1KeyframesUsable(v));
+  v.sinceLh2Light = 30;
+  v.lh2Stations = 3;
+  EXPECT_TRUE(lh::runtime::Lh1KeyframesUsable(v)) << "2.0 stations seen, but dark for 30 s: turned off";
+}
+
+TEST(Lh1Keyframes, NotFromUnsortedLightWhile2Point0IsLit) {
+  lh::runtime::Lh1KeyframeView v;
+  v.sinceLh2Light = 0.2;
+  v.lh2Stations = 3;
+  EXPECT_FALSE(lh::runtime::Lh1KeyframesUsable(v)) << "switched off, or a 1.0-only device: not sorting";
+  v.sorting = true;
+  EXPECT_FALSE(lh::runtime::Lh1KeyframesUsable(v)) << "sorting, no rotor learned yet (a replay starting mid-session)";
+  v.knownRotors = 2;
+  EXPECT_FALSE(lh::runtime::Lh1KeyframesUsable(v)) << "a station seen whose rotor this device hasn't learned";
+  v.knownRotors = 3;
+  EXPECT_TRUE(lh::runtime::Lh1KeyframesUsable(v));
+}
+
+TEST(Lh1Keyframes, SortingNeedsARotorBeforeAnyStationIsSeen) {
+  lh::runtime::Lh1KeyframeView v;
+  v.sinceLh2Light = 0.2;  // 2.0 light, its station not identified yet
+  v.sorting = true;
+  EXPECT_FALSE(lh::runtime::Lh1KeyframesUsable(v));
+  v.knownRotors = 1;
+  EXPECT_TRUE(lh::runtime::Lh1KeyframesUsable(v));
+}
+
+namespace {
+
+using lh::runtime::ForeignSweeps;
+using lh::runtime::SweepSample;
+
+// n samples 20 us apart from `from`, off the pose by `offset` plus `step` per sample.
+void Sweep(std::vector<SweepSample>* v, double from, int n, double offset, double step) {
+  for (int i = 0; i < n; ++i) v->push_back({from + i * 20e-6, offset + i * step, true});
+}
+
+int Dropped(const std::vector<bool>& d) { return int(std::count(d.begin(), d.end(), true)); }
+
+}  // namespace
+
+TEST(ForeignSweeps, ASweepOffAlikeIsTheStationsOwn) {
+  std::vector<SweepSample> v;
+  Sweep(&v, 1.0, 6, 0.05, 0.0002);  // 50 mrad off, all alike: the pose's error or the timing's
+  EXPECT_EQ(Dropped(ForeignSweeps(v)), 0);
+}
+
+TEST(ForeignSweeps, ASweepAtAnotherTiltIsDropped) {
+  std::vector<SweepSample> v;
+  Sweep(&v, 1.0, 6, 0.0, 0.02);  // each sensor 20 mrad further off than the last
+  EXPECT_EQ(Dropped(ForeignSweeps(v)), 6);
+}
+
+TEST(ForeignSweeps, TooFewToJudgeAreKept) {
+  std::vector<SweepSample> v;
+  Sweep(&v, 1.0, 2, 0.0, 0.05);
+  EXPECT_EQ(Dropped(ForeignSweeps(v)), 0);
+  v.push_back({1.0 + 40e-6, 0.3, false});  // a third, but the pose has nothing for it
+  EXPECT_EQ(Dropped(ForeignSweeps(v)), 0);
+}
+
+TEST(ForeignSweeps, TwoSweepsInOneFrameAreJudgedApart) {
+  std::vector<SweepSample> v;
+  Sweep(&v, 1.0, 5, 0.001, 0.0001);   // the station's own
+  Sweep(&v, 1.003, 5, 0.1, 0.03);     // 3 ms on: a 2.0 sweep
+  v.push_back({1.003 + 50e-6, 0.0, false});  // in that sweep, unjudged: it goes with it
+  std::sort(v.begin(), v.end(), [](const SweepSample& a, const SweepSample& b) { return a.time < b.time; });
+  const auto d = ForeignSweeps(v);
+  EXPECT_EQ(Dropped(d), 6);
+  for (size_t i = 0; i < v.size(); ++i) EXPECT_EQ(d[i], v[i].time > 1.002) << i;
 }

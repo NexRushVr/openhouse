@@ -124,10 +124,15 @@ Version 1.0.3 (`include/lh/version.hpp`; v1.0.1 shipped still saying 1.0.0). Rec
   elsewhere, or the fit rejecting its keyframes; `driver/tracking_improvements.md`).
   `Session::ResetRoom` / deleting `roommap.json` forgets every room.
 * SteamVR settings page (`packaging/settingsschema.vrsettings`, section `driver_openhouse`):
-  smoothing, acceleration prediction, 1.0 and 2.0 base stations together (off; with switches
-  for controllers, trackers and the headset's timing, `driver/mixed_stations.md`), Record
-  Session (turning it off saves the bug report zip, `lh/bug_report.hpp`), Reset room. Only
-  toggles/sliders/selects exist there.
+  smoothing, acceleration prediction, Record Session (turning it off saves the bug report zip,
+  `lh/bug_report.hpp`), Reset room, and 1.0 and 2.0 base stations together (off), whose switches
+  (controllers, trackers, the headset's timing and the tests, `driver/mixed_stations.md`) sit in its
+  `on_subsection`: SteamVR shows them under it while it's on. They're also listed in the page's own
+  `values`, with a type and no control: SteamVR saves a setting only if it finds it there
+  (`GetSettingSchema` doesn't look into subsections), and without that their toggles did nothing. A
+  schema can't make popups like Startup / Shutdown's list of overlay apps (that page is SteamVR's own code); its generic pages
+  take checkbox, toggle (with `on_subsection` / `off_subsection`), select, radio, segment, slider and
+  label, and `requires` (shown only while another setting has a value).
 * Bug reports: replay `recording/*.lhraw` with `lhtool session ... --room COPY_OF config/roommap.json
   --steam-db - --preinit - --trace OUT`. Mid-session recordings decode only with the Wv2
   probes (`driver/wireless_protocol.md`); older builds see almost nothing in them.

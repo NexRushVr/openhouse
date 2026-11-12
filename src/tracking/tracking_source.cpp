@@ -62,6 +62,7 @@ void TrackingSource::OnLightPulse(const LightPulse& pulse) {
     });
     int channel = -1;
     double hitTime = 0;
+    sorter_->SetFlashSchedule(!UseMulti());  // lhbs multi-station flashes keep their own schedule
     const auto result = sorter_->Sort(pulse.time, pulse.width, pulse.sensor, &channel, &hitTime);
     if (result == PulseSorter::Result::Hit) sob_.OnSensorWord(hitTime, channel, pulse.sensor, true);
     if (result != PulseSorter::Result::NotOurs) return;

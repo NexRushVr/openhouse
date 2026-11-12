@@ -327,6 +327,7 @@ bool LighthouseDirect::Bootstrap(const OpticalFrame& frame, const BaseConfig& ba
     filter_.altBaseRelearn[slot - 1] = false;
     filter_.n = std::max(filter_.n, idx + 6);
     slots_[slot] = base.serial; ++secondaryBases_;
+    slotUsed_[slot] = time;
     return false;  // Added a base, but did not perform a measurement update.
   }
   for (int i = 0; i < 3; ++i) filter_.x[i] = solved.pose.p[size_t(i)];
@@ -376,6 +377,62 @@ bool LighthouseDirect::Bootstrap(const OpticalFrame& frame, const BaseConfig& ba
   return true;
 }
 
+// Not stock (rotor_wobble.hpp): what a frame's sorted hits have in common against the predicted state goes
+// to their rotor's wobble, as far as the state is known better than the wobble, and comes off the hits.
+// z and R are the update's, R already filled in.
+//
+// The hits' weights stay as they were. At first what was left unsure of the wobble went onto them as scatter
+// they share (its variance on every pair of the rotor's rows), which makes a frame's mean count for less:
+// by 0.3 mrad while the wobble isn't followed (a fresh pose, thin light), 0.12-0.15 mrad while it is. A
+// frame's mean is what holds a pose that little else lights. A 2018 tracker with one rotor's 3-4 sensors a
+// frame and a 1.0 station just added had its IMU calibration run off (15 deg) and reset 1 s after its first
+// LH1 mode, in 8 replays of 8 with the shared scatter (capped at 0.15 mrad too) and 0 of 9 without. The
+// steadiness is all from taking the offset out: still jitter 0.25, 0.23, 0.23 mm (3.0 tracker,
+// Knuckles) to 0.16, 0.11, 0.12 with both, 0.17, 0.12, 0.12 without the shared scatter, 0.24, 0.22, 0.21
+// with it alone.
+void LighthouseDirect::FollowRotorWobble(uint32_t serial, double time, const std::vector<Residual>& residuals,
+                                         const std::vector<bool>& sorted, bool referenced, std::vector<double>* z, const Mat& R) {
+  std::vector<int> rows;
+  for (size_t i = 0; i < sorted.size(); ++i)
+    if (sorted[i]) rows.push_back(int(i));
+  if (rows.empty()) return;
+  // The rotor's wobble already taken off by a device in LH2 mode (kSampleReferenced): nothing to follow. Followed
+  // as well, a 2018 tracker lying still had 0.37 mm of still jitter against 0.23 not (0.27 before either), with a
+  // follower of their own for such frames too. It starts over where the reference ends.
+  if (referenced) {
+    wobbles_.erase(serial);
+    return;
+  }
+  RotorWobble& wobble = wobbles_[serial];
+  wobble.Predict(time, wobbleSpread_, wobbleMemory_);
+  const int n = filter_.n;
+  Jet state[kStateSize];
+  for (int i = 0; i < kStateSize; ++i) state[i] = Jet(filter_.xLin[i], i);
+  std::vector<double> off(rows.size());
+  std::vector<Eigen::RowVectorXd> jacobian(rows.size());
+  for (size_t k = 0; k < rows.size(); ++k) {
+    Jet predicted;
+    residuals[size_t(rows[k])].evalJet(state, &predicted);
+    off[k] = (*z)[size_t(rows[k])] - predicted.a;
+    jacobian[k] = predicted.v.head(n).transpose();
+  }
+  const std::vector<size_t> common = direct::HitsInCommon(off);
+  if (!common.empty()) {
+    Eigen::RowVectorXd mean = Eigen::RowVectorXd::Zero(n);
+    double sum = 0, scatter = 0;
+    for (const size_t k : common) {
+      sum += off[k];
+      mean += jacobian[k];
+      scatter += R(rows[k], rows[k]);
+    }
+    const double used = double(common.size());
+    mean /= used;
+    const double pose = (mean * filter_.Ppred.topLeftCorner(n, n) * mean.transpose())(0, 0);
+    wobble.Update(sum / used, pose, scatter / (used * used));
+  }
+  for (const int i : rows) (*z)[size_t(i)] -= wobble.value;
+}
+
 bool LighthouseDirect::OpticalUpdate(const OpticalFrame& frame, const BaseConfig& base, int slot) {
   return ApplyOpticalResiduals(frame, base, slot);
 }
@@ -392,6 +449,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
   std::vector<Residual> residuals;
   std::vector<double> z, facing;
   std::vector<bool> sorted;
+  bool referenced = false;  // FollowRotorWobble
   for (const auto& s : samples) {
     const int idx = model_.IndexOf(s.sensor);
     const auto point = model_.points[size_t(idx)], normal = model_.normals[size_t(idx)];
@@ -408,6 +466,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
       [=](const Jet* x, Jet* r) { r[0] = SensorAngular(x, offset, point.data(), s.axis, cal.data(), alt, baseModel); }});
     z.push_back(s.angle); facing.push_back(cos);
     sorted.push_back((s.flags2 & kSampleSorted) != 0);
+    referenced |= (s.flags2 & kSampleReferenced) != 0;
   }
   // 0x36f740: when every sample fails the facing cutoff it skips the update but
   // still returns PredictTo's result (true); x, P and time are left untouched.
@@ -442,6 +501,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
     }
   }
   R(m - 1, m - 1) = 1e-8;
+  if (wobbleSpread_ > 0) FollowRotorWobble(base.serial, time, residuals, sorted, referenced, &z, R);
   // Not stock: right after a reseed (reacquired with a carried calibration, so already
   // at 201 updates) the other bases' light isn't frame-gated: it is what corrects the
   // new pose, and gated, the device tracked from one base on a pose the others never fit
@@ -452,6 +512,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
   const bool ok = filter_.Update(residuals, R, Eigen::Map<Vec>(z.data(), m), true);
   filter_.frameGateOff = false;
   if (!ok) return false;
+  if (hits >= 3) slotUsed_[slot] = time;
   time_ = time;
   const uint64_t before = filter_.updateCount;
   if (hits >= 4) {
@@ -690,11 +751,17 @@ bool LighthouseDirect::SeedPose(const Seed& seed) {
 }
 
 bool LighthouseDirect::AddKnownAltBase(uint32_t serial, const Eigen::Isometry3d& altFromPrimary,
-                                       double translationVariance, double rotationVariance) {
+                                       double translationVariance, double rotationVariance, bool lit,
+                                       uint32_t* replaced) {
   if (!slots_[0] || Slot(serial) >= 0 || !bases_.count(serial)) return false;
   int slot = 1;
   while (slot < 4 && slots_[slot]) ++slot;
-  if (slot == 4) return false;
+  if (slot == 4) {
+    slot = lit ? SlotToGiveUp(slotUsed_, time_) : 0;
+    if (slot == 0) return false;
+    if (replaced) *replaced = slots_[slot];
+    --secondaryBases_;
+  }
   const Eigen::AngleAxisd aa(altFromPrimary.rotation());
   const Eigen::Vector3d rotation = aa.axis() * aa.angle();
   const int idx = kAltBaseIndex[slot - 1];
@@ -709,6 +776,7 @@ bool LighthouseDirect::AddKnownAltBase(uint32_t serial, const Eigen::Isometry3d&
   filter_.altBaseRelearn[slot - 1] = false;
   filter_.n = std::max(filter_.n, idx + 6);
   slots_[slot] = serial; ++secondaryBases_;
+  slotUsed_[slot] = time_;
   return true;
 }
 

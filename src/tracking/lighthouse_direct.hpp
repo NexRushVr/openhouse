@@ -11,12 +11,32 @@
 
 #include "lh/tracker.hpp"
 #include "direct_filter.hpp"
+#include "rotor_wobble.hpp"
 #include "sample_history.hpp"
 #include "tracked_object.hpp"
 
 namespace lh {
 
 struct ExpectedHit;
+
+// Not stock: the filter has four slots, the primary base and three others, and a room of 1.0 and 2.0
+// stations has more to see (two 1.0 and three 2.0 here). Whichever lit the device first took the last slot
+// and kept it for as long as tracking held, lit or not. A 2018 tracker's last slot went to a 1.0 station that
+// then gave it 1-3 frames a second, none used, while the other 1.0 station's 60 frames a second (2-3
+// sensors) had no slot and went unread: on one plane of one rotor besides, lying still, it slid 1.8 m in 9 s
+// with every frame taken (replay of 2026-11-11 13:02). Which of two 1.0 stations came first hung on a pulse.
+//
+// So with every slot taken, a base lighting three sensors or more takes the place of the other base whose
+// light was last used longest ago (lastUsed, per slot: the last frame of three hits or more the filter
+// took), if that is more than kSlotDark ago. The one put out comes back the same way when it lights the
+// device again. Returns the slot to give up, 1-3; 0: none.
+constexpr double kSlotDark = 2.0;  // s
+inline int SlotToGiveUp(const double lastUsed[4], double now) {
+  int slot = 1;
+  for (int other = 2; other < 4; ++other)
+    if (lastUsed[other] < lastUsed[slot]) slot = other;
+  return now - lastUsed[slot] > kSlotDark ? slot : 0;
+}
 
 class LighthouseDirect {
  public:
@@ -35,9 +55,14 @@ class LighthouseDirect {
   // sits about twice as far from the pose as an LH2 word, and weighted as one it shakes the pose.
   // sortedSeconds: added to the timing scatter of a 2.0 hit picked out of LH1 pulses
   // (kSampleSorted); lh1Radians: to the angle scatter of a 1.0 station's hit.
-  void SetMixedLightScatter(double sortedSeconds, double lh1Radians) {
+  // wobbleRadians: how far a 2.0 rotor's sorted hits wander off the pose all alike, which is followed
+  // per rotor and taken out of them (rotor_wobble.hpp), over wobbleSeconds; 0: not followed.
+  void SetMixedLightScatter(double sortedSeconds, double lh1Radians, double wobbleRadians = 0, double wobbleSeconds = 0) {
     sortedScatter_ = sortedSeconds;
     lh1Scatter_ = lh1Radians;
+    wobbleSpread_ = wobbleSeconds > 0 ? wobbleRadians : 0;
+    wobbleMemory_ = wobbleSeconds;
+    if (wobbleSpread_ <= 0) wobbles_.clear();
   }
   void OnBaseConfig(const BaseConfig&, const BaseDynamicState&);
   void SetRecordedTilt(uint32_t serial, std::array<double, 2> tilt, double variance);
@@ -106,9 +131,12 @@ class LighthouseDirect {
     bool calibrated = false;  // start past the 200-update calibration phase
   };
   bool SeedPose(const Seed& seed);
-  // Add an alternate base whose pose relative to the primary is already known.
+  // Add an alternate base whose pose relative to the primary is already known. Not stock: with every slot
+  // taken and `lit` (the base lights the device now), in place of a base gone dark (SlotToGiveUp), which
+  // *replaced then names.
   bool AddKnownAltBase(uint32_t serial, const Eigen::Isometry3d& altFromPrimary,
-                       double translationVariance, double rotationVariance);
+                       double translationVariance, double rotationVariance, bool lit = false,
+                       uint32_t* replaced = nullptr);
   // Overwrite an alternate base already in the filter (e.g. after the room solver
   // refined it). Cross-covariances with the rest of the state are cleared.
   void SetAltBaseRelearn(uint32_t serial, bool relearn);  // see DirectFilter::altBaseRelearn
@@ -132,6 +160,8 @@ class LighthouseDirect {
   double BaseDistance(const double* state, int slot) const;
   std::vector<OpticalSample> Gather(const std::vector<OpticalSample>&) const;
   void FilterOutliers(std::vector<OpticalSample>* samples, double distance) const;
+  void FollowRotorWobble(uint32_t serial, double time, const std::vector<direct::Residual>& residuals,
+                         const std::vector<bool>& sorted, bool referenced, std::vector<double>* z, const direct::Mat& R);
 
   TrackedObjectModel model_;
   direct::DirectFilter filter_;
@@ -142,6 +172,7 @@ class LighthouseDirect {
   std::map<uint32_t, RecordedTilt> recordedTilts_;
   std::deque<ImuSample> imu_;
   uint32_t slots_[4]{};
+  double slotUsed_[4] = {-1e300, -1e300, -1e300, -1e300};  // SlotToGiveUp: or when the base got the slot
   double time_ = 0, lastOpticalTime_ = 0, opticalTimeout_ = 0.5;
   bool swing_ = false;
   double violentUntil_ = -1e300;  // IMU calibration held until (freezeImuCalibration)
@@ -156,6 +187,8 @@ class LighthouseDirect {
   uint64_t altGateUntil_ = 0;  // after a reseed: the other bases' light isn't frame-gated before this
   double lastWellLit_ = -1e300;  // the last frame of four sensors or more that was used
   double sortedScatter_ = 0, lh1Scatter_ = 0;  // SetMixedLightScatter
+  double wobbleSpread_ = 0, wobbleMemory_ = 0;
+  std::map<uint32_t, direct::RotorWobble> wobbles_;  // per 2.0 station (FollowRotorWobble)
   // ExpectedHits: the state carried forward, kept for a moment since it's asked per pulse.
   mutable double expectedState_[direct::kStateSize] = {};
   mutable double expectedTime_ = 0, expectedFilterTime_ = -1;

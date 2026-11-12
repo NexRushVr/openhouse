@@ -1552,12 +1552,17 @@ class Provider : public IServerTrackedDeviceProvider {
       // a hidden marker keeps whatever is chosen after that.
       if (writeDefaults) {
         EVRSettingsError e = VRSettingsError_None;
+        const lh::MixedLightOptions defaults = session_->MixedLight();
         if (!VRSettings()->GetBool(kSection, "mixedLightDefaultsWritten", &e)) {
-          const lh::MixedLightOptions defaults = session_->MixedLight();
           VRSettings()->SetBool(kSection, "mixedLightControllers", defaults.controllers);
           VRSettings()->SetBool(kSection, "mixedLightTrackers", defaults.trackers);
           VRSettings()->SetBool(kSection, "mixedLightScout", defaults.scout);
           VRSettings()->SetBool(kSection, "mixedLightDefaultsWritten", true);
+        }
+        // The rotor reference came on by default after the marker above was written, so it has one of its own.
+        if (!VRSettings()->GetBool(kSection, "mixedLightRotorReferenceDefaultWritten", &e)) {
+          VRSettings()->SetBool(kSection, "mixedLightRotorReference", defaults.rotorReference);
+          VRSettings()->SetBool(kSection, "mixedLightRotorReferenceDefaultWritten", true);
         }
       }
       const lh::MixedLightOptions file = session_->MixedLight();
@@ -1566,6 +1571,8 @@ class Provider : public IServerTrackedDeviceProvider {
       mixed.controllers = flag("mixedLightControllers", file.controllers);
       mixed.trackers = flag("mixedLightTrackers", file.trackers);
       mixed.scout = flag("mixedLightScout", file.scout);
+      mixed.preferLh2 = flag("mixedLightPreferLh2", file.preferLh2);    // the same
+      mixed.rotorReference = flag("mixedLightRotorReference", file.rotorReference);  // on by default, written above
       session_->SetMixedLight(mixed);
       g_hideLost = flag("hideLostDevices", session_->HideLostDevices());
     } else {

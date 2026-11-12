@@ -167,4 +167,17 @@ TEST(TrackedObject, LegacyImuPoseAndValidation) {
   EXPECT_FALSE(lh::TrackedObjectModel::FromJson(j.dump(), &model));
 }
 
+TEST(TrackerCore, AFullFilterGivesUpTheSlotGoneDarkLongest) {
+  // Slot 0 is the primary base and is never given up. Slots 1-3 last gave a used frame at these times.
+  const double fresh[4] = {0.0, 99.5, 99.9, 98.5};
+  EXPECT_EQ(lh::SlotToGiveUp(fresh, 100.0), 0);  // none dark for more than kSlotDark
+  const double dark[4] = {0.0, 99.5, 97.0, 96.0};
+  EXPECT_EQ(lh::SlotToGiveUp(dark, 100.0), 3);  // the one dark longest
+  const double primaryDark[4] = {0.0, 99.5, 99.9, 99.0};
+  EXPECT_EQ(lh::SlotToGiveUp(primaryDark, 100.0), 0);
+  const double justTaken[4] = {0.0, 100.0, 100.0, 100.0};  // a base keeps a slot kSlotDark after getting it
+  EXPECT_EQ(lh::SlotToGiveUp(justTaken, 100.0 + lh::kSlotDark), 0);
+  EXPECT_EQ(lh::SlotToGiveUp(justTaken, 100.1 + lh::kSlotDark), 1);
+}
+
 }  // namespace

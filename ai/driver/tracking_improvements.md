@@ -335,6 +335,8 @@ against a copy of the room; the windowed scorer learns each window's room from s
   bases' light isn't frame-gated for 100 updates; the reacquired base stays gated.
 * **Refused light**: 0.5 s of well-lit frames all refused -> reacquire with the calm
   calibration (`kRefusedLightReset`), instead of the 2 s timeout / running out of bounds.
+  Light the filter skips for being late (behind the time the IMU has carried it to) isn't counted:
+  it says nothing about the pose (1.0 + 2.0 light-mode switches, mixed_stations.md).
 * **Room**: a base is first placed from >= 12 keyframes (`kMinLocateKeyframes`); from one,
   mid-swing, it was 1.3 m off.
 * **Output glide** across a deliberate base switch: the glide clock advances while the
