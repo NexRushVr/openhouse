@@ -94,10 +94,16 @@ struct ControllerInput {
   double gripForce = 0;               // 0..1
   // Finger proximity / curl, 0 = open .. 1 = touching.
   double fingerIndex = 0, fingerMiddle = 0, fingerRing = 0, fingerPinky = 0;
+  // Mapped controllers (ControllerType::Mapped): the latest raw input record, as the
+  // device's own input profile lays it out (its "input_components" bit offsets).
+  std::vector<uint8_t> mapped;
 };
 
 // Which controller a Controller is (from its config); decides its inputs and profile.
-enum class ControllerType { Index, ViveWand };
+// Mapped: any other maker's controller whose firmware sends "mapped input" (config
+// firmware_config.mapped_input), e.g. Shiftall's FlipVR: its own input profile names
+// each component's bits in the raw record.
+enum class ControllerType { Index, ViveWand, Mapped };
 
 struct DeviceInfo {
   std::string serial;           // "LHR-13DA81D1", or "LHB-A101B835" for bases

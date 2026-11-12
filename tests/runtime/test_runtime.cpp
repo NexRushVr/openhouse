@@ -4,6 +4,7 @@
 // session replay of the recorded motion capture.
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -21,6 +22,8 @@
 #include "runtime/device_role.hpp"
 #include "runtime/device_tracker.hpp"
 #include "runtime/index_input.hpp"
+#include "runtime/mapped_input.hpp"
+#include "runtime/model_scale.hpp"
 #include "runtime/room_map.hpp"
 #include "runtime/room_solver.hpp"
 #include "tracking/lighthouse_model.hpp"
@@ -125,6 +128,171 @@ TEST(ViveWandInput, DecodesButtonsTriggerAndTrackpad) {
   EXPECT_TRUE(d.State().systemClick);
   EXPECT_FALSE(d.State().gripClick);
   EXPECT_DOUBLE_EQ(d.State().trackpadX, 0.0);
+}
+
+// Shiftall FlipVR: device_class controller, mapped-input firmware, its own profile. The
+// stock driver makes it a controller; it was a tracker here before.
+TEST(MappedInput, FlipVrIsAMappedController) {
+  const std::string flip = R"({"device_class":"controller","manufacturer":"Shiftall Inc.",
+    "model_number":"FlipVR Controller VC1B Left","render_model":"{shiftall}flipvr_controller_vc1b_left_2_0",
+    "input_profile":"{shiftall}/input/flipvr_controller_vc1b_profile.json","resource_root":"shiftall",
+    "tracked_controller_role":"left_hand","firmware_config":{"mapped_input":true}})";
+  EXPECT_EQ(RoleFromConfig(flip), DeviceRole::Controller);
+  EXPECT_EQ(ControllerTypeFromConfig(flip), ControllerType::Mapped);
+  // Without mapped input it stays what it was (a tracker), and wands/Index are unchanged.
+  EXPECT_EQ(RoleFromConfig(R"({"device_class":"controller","model_number":"Something Else",
+    "input_profile":"{x}/input/p.json","firmware_config":{"mapped_input":false}})"), DeviceRole::Tracker);
+  EXPECT_EQ(ControllerTypeFromConfig(R"({"device_class":"controller","model_number":"Knuckles Right",
+    "firmware_config":{"mapped_input":true},"input_profile":"{indexcontroller}/input/index_controller_profile.json"})"),
+            ControllerType::Index);
+  // A tracker role still wins.
+  EXPECT_EQ(RoleFromConfig(R"({"device_class":"controller","tracked_controller_role":"generic_tracker",
+    "input_profile":"{x}/input/p.json","firmware_config":{"mapped_input":true}})"), DeviceRole::Tracker);
+}
+
+TEST(MappedInput, DecoderKeepsTheRawRecord) {
+  ControllerInputDecoder d(ControllerType::Mapped);
+  InputReport legacy;
+  legacy.hasButtons = true; legacy.buttons = 0xff;
+  EXPECT_FALSE(d.Apply(legacy, 1.0));  // not this device's format
+  InputReport r;
+  r.format = InputFormat::Raw;
+  r.raw = {1, 2, 3, 4, 5, 6};
+  EXPECT_TRUE(d.Apply(r, 2.0));
+  EXPECT_EQ(d.State().mapped, r.raw);
+  EXPECT_FALSE(d.Apply(r, 3.0));  // same record
+  EXPECT_DOUBLE_EQ(d.State().hostTime, 3.0);
+}
+
+// The components of {shiftall}/input/flipvr_controller_vc1b_profile.json (abridged).
+const char* kFlipProfile = R"({
+  "controller_type": "flipvr_controller_vc1b",
+  "input_source": {
+    "/input/joystick": {"type": "joystick"}, "/input/trigger": {"type": "trigger"},
+    "/input/grip": {"type": "trigger"},
+    "/input/a": {"type": "button", "side": "right"}, "/input/b": {"type": "button", "side": "right"},
+    "/input/x": {"type": "button", "side": "left"}, "/input/y": {"type": "button", "side": "left"},
+    "/input/system": {"type": "button"}
+  },
+  "input_components": {
+    "/input/joystick/x": {"bit_offset": 0, "bit_width": 8, "min": 0, "max": 255, "type": "scalar", "unit": "twos_complement"},
+    "/input/joystick/y": {"bit_offset": 8, "bit_width": 8, "min": 0, "max": 255, "type": "scalar", "unit": "twos_complement"},
+    "/input/trigger/value": {"bit_offset": 16, "bit_width": 8, "min": 0, "max": 255, "type": "scalar", "unit": "onesided"},
+    "/input/grip/value": {"bit_offset": 24, "bit_width": 8, "min": 0, "max": 255, "type": "scalar", "unit": "onesided"},
+    "/input/a/touch": {"bit_offset": 32, "type": "bool"}, "/input/x/touch": {"bit_offset": 32, "type": "bool"},
+    "/input/b/touch": {"bit_offset": 33, "type": "bool"}, "/input/y/touch": {"bit_offset": 33, "type": "bool"},
+    "/input/trigger/touch": {"bit_offset": 34, "type": "bool"},
+    "/input/joystick/touch": {"bit_offset": 35, "type": "bool"},
+    "/input/a/click": {"bit_offset": 36, "type": "bool"}, "/input/x/click": {"bit_offset": 36, "type": "bool"},
+    "/input/b/click": {"bit_offset": 37, "type": "bool"}, "/input/y/click": {"bit_offset": 37, "type": "bool"},
+    "/input/system/click": {"bit_offset": 38, "type": "bool"},
+    "/input/trigger/click": {"bit_offset": 39, "type": "bool"},
+    "/input/grip/click": {"bit_offset": 40, "type": "bool"},
+    "/input/joystick/click": {"bit_offset": 41, "type": "bool"},
+    "/output/haptic": {"type": "vibration"}
+  }
+})";
+
+TEST(MappedInput, ParsesTheProfileForOneHand) {
+  using lh::runtime::MappedComponent;
+  lh::runtime::MappedProfile left, right, both;
+  std::string error;
+  ASSERT_TRUE(lh::runtime::ParseMappedProfile(kFlipProfile, "left_hand", &left, &error)) << error;
+  ASSERT_TRUE(lh::runtime::ParseMappedProfile(kFlipProfile, "right_hand", &right, &error)) << error;
+  ASSERT_TRUE(lh::runtime::ParseMappedProfile(kFlipProfile, "", &both, &error)) << error;
+  EXPECT_EQ(left.controllerType, "flipvr_controller_vc1b");
+  auto has = [](const lh::runtime::MappedProfile& p, const std::string& path) {
+    return std::any_of(p.components.begin(), p.components.end(), [&](const MappedComponent& c) { return c.path == path; });
+  };
+  EXPECT_TRUE(has(left, "/input/x/click") && has(left, "/input/y/touch"));
+  EXPECT_FALSE(has(left, "/input/a/click") || has(left, "/input/b/touch"));
+  EXPECT_TRUE(has(right, "/input/a/click") && !has(right, "/input/x/click"));
+  EXPECT_TRUE(has(left, "/output/haptic") && has(left, "/input/system/click") && has(left, "/input/joystick/x"));
+  EXPECT_EQ(both.components.size(), 19u);
+  EXPECT_EQ(left.components.size(), 15u);
+  std::string bad;
+  lh::runtime::MappedProfile none;
+  EXPECT_FALSE(lh::runtime::ParseMappedProfile(R"({"controller_type":"x"})", "", &none, &bad));
+  EXPECT_FALSE(lh::runtime::ParseMappedProfile("not json", "", &none, &bad));
+}
+
+TEST(MappedInput, ReadsTheBitsOfARecord) {
+  lh::runtime::MappedProfile p;
+  std::string error;
+  ASSERT_TRUE(lh::runtime::ParseMappedProfile(kFlipProfile, "right_hand", &p, &error)) << error;
+  auto value = [&](const std::vector<uint8_t>& record, const std::string& path) {
+    for (const auto& c : p.components)
+      if (c.path == path) return lh::runtime::MappedValue(record, c);
+    return std::optional<double>();
+  };
+  // At rest (recorded from a FlipVR): stick 0x7f 0x7f is centered, not full scale.
+  const std::vector<uint8_t> rest = {0x7f, 0x7f, 0x2c, 0x00, 0x00, 0x00};
+  EXPECT_NEAR(*value(rest, "/input/joystick/x"), 0.0, 0.01);
+  EXPECT_NEAR(*value(rest, "/input/joystick/y"), 0.0, 0.01);
+  EXPECT_DOUBLE_EQ(*value(rest, "/input/a/click"), 0.0);
+  // Stick full left and up, trigger half, grip full; A touched, A and grip clicked.
+  const std::vector<uint8_t> record = {0x00, 0xff, 0x80, 0xff, 0x01 | 0x10, 0x01};
+  EXPECT_DOUBLE_EQ(*value(record, "/input/joystick/x"), -1.0);
+  EXPECT_DOUBLE_EQ(*value(record, "/input/joystick/y"), 1.0);
+  EXPECT_NEAR(*value(record, "/input/trigger/value"), 128.0 / 255.0, 1e-12);
+  EXPECT_DOUBLE_EQ(*value(record, "/input/grip/value"), 1.0);
+  EXPECT_DOUBLE_EQ(*value(record, "/input/a/touch"), 1.0);
+  EXPECT_DOUBLE_EQ(*value(record, "/input/b/touch"), 0.0);
+  EXPECT_DOUBLE_EQ(*value(record, "/input/a/click"), 1.0);
+  EXPECT_DOUBLE_EQ(*value(record, "/input/grip/click"), 1.0);
+  EXPECT_DOUBLE_EQ(*value(record, "/input/joystick/click"), 0.0);
+  EXPECT_FALSE(value({0x00, 0x00}, "/input/grip/click").has_value());  // too short for its bit
+  EXPECT_FALSE(value(record, "/output/haptic").has_value());
+
+  ControllerInput named;
+  lh::runtime::MappedToControllerInput(p, record, &named);
+  EXPECT_DOUBLE_EQ(named.thumbstickX, -1.0);
+  EXPECT_DOUBLE_EQ(named.thumbstickY, 1.0);
+  EXPECT_NEAR(named.trigger, 128.0 / 255.0, 1e-12);
+  EXPECT_TRUE(named.aTouch && named.aClick && named.gripClick);
+  EXPECT_FALSE(named.bClick || named.systemClick || named.triggerClick);
+  EXPECT_DOUBLE_EQ(named.gripForce, 1.0);
+  EXPECT_DOUBLE_EQ(named.fingerMiddle, 1.0);
+}
+
+// lighthouse_scale.json, as the stock driver applies it: a FlipVR right controller's own
+// points are Shiftall's reference to 0.4 mm, so its geometry takes the reference's scale.
+TEST(ModelScale, AppliesTheMatchingReference) {
+  using lh::runtime::ScaleReference;
+  std::vector<ScaleReference> refs;
+  std::string error;
+  ASSERT_TRUE(lh::runtime::ParseScaleReferences(R"({
+    "Other": {"scale": 0.9, "modelPoints": [[0.1, 0, 0], [0, 0.1, 0]]},
+    "FlipVR Controller VC1B Right": {"scale": 1.04819540747,
+      "modelPoints": [[0.0900820717, 0.03899635, 0.0344087742], [0.0833031312, 0.044179827, 0.0245249346],
+                      [0.0770357102, 0.0486424901, 0.0294898432]]},
+    "Broken": {"modelPoints": [[0, 0, 0]]}})", &refs, &error)) << error;
+  ASSERT_EQ(refs.size(), 2u);  // "Broken" has no scale
+  // The device's own points, a fraction of a millimetre off the reference.
+  std::vector<std::array<double, 3>> points = {
+      {0.0903927162, 0.0390972607, 0.0344037004}, {0.0833, 0.0442, 0.0245}, {0.0770, 0.0486, 0.0295}};
+  const auto before = points;
+  auto match = lh::runtime::ApplyScaleReference(refs, &points);
+  ASSERT_NE(match.reference, nullptr);
+  EXPECT_EQ(match.reference->name, "FlipVR Controller VC1B Right");
+  for (size_t i = 0; i < points.size(); ++i)
+    for (int k = 0; k < 3; ++k) EXPECT_NEAR(points[i][k], before[i][k] * 1.04819540747, 1e-12);
+
+  // Another point count (the FlipVR left: 26 own points, 25 in the reference): unchanged.
+  std::vector<std::array<double, 3>> two = {{0.0903927162, 0.0390972607, 0.0344037004}, {0.0833, 0.0442, 0.0245}};
+  EXPECT_EQ(lh::runtime::ApplyScaleReference(refs, &two).reference, nullptr);
+  EXPECT_DOUBLE_EQ(two[0][0], 0.0903927162);
+
+  // The same CAD measured at another size: logged as a mismatch, not scaled.
+  std::vector<std::array<double, 3>> big = {{0.1004, 0, 0}, {0, 0.1004, 0}};
+  match = lh::runtime::ApplyScaleReference(refs, &big);
+  EXPECT_EQ(match.reference, nullptr);
+  ASSERT_EQ(match.mismatched.size(), 1u);
+  EXPECT_EQ(match.mismatched[0], "Other");
+  EXPECT_DOUBLE_EQ(big[0][0], 0.1004);
+
+  std::vector<ScaleReference> none;
+  EXPECT_FALSE(lh::runtime::ParseScaleReferences("[1, 2]", &none, &error));
 }
 
 TEST(IndexInput, DecodesButtonsAxesAndExtendedRecord) {
@@ -1067,4 +1235,37 @@ TEST(MixedLight, ABadValueLeavesItOff) {
 
 TEST(MixedLight, TheCommandLineWins) {
   EXPECT_TRUE(MixedFromSettings(R"({"mixedLight": false})", true).enabled);
+}
+
+// #86: a room learned before device model scales were applied (no "modelScale") keeps its
+// bases, unlocked and less certain, once: the solver refines them in the same room.
+TEST(RoomMap, RoomLearnedWithoutModelScalesIsRefinedOnce) {
+  const auto path = (std::filesystem::temp_directory_path() / ("lh-test-scale-" + std::to_string(lh::platform::ProcessId()) + ".json")).string();
+  {
+    std::ofstream f(path);
+    f << R"({"rooms": [{"id": "room-1", "source": "lh", "updated": 1, "bases": [
+          {"serial": 1, "origin": true, "observations": 0, "positionVariance": 0, "rotationVariance": 0,
+           "pose": {"position": [0, 0, 0], "orientation": [1, 0, 0, 0]}},
+          {"serial": 2, "observations": 500, "positionVariance": 1e-6, "rotationVariance": 1e-7,
+           "pose": {"position": [3, 0.5, -2], "orientation": [1, 0, 0, 0]}}]}]})";
+  }
+  RoomMap room;
+  ASSERT_TRUE(room.Load(path));
+  room.OnBaseSeen(Config(1), {});
+  room.OnBaseSeen(Config(2), {});
+  ASSERT_NE(room.Base(2), nullptr);
+  EXPECT_FALSE(RoomMap::Locked(*room.Base(2)));
+  EXPECT_GE(room.Base(2)->positionVariance, 3e-4);
+  EXPECT_NEAR(room.Base(2)->worldFromBase.translation().x(), 3, 1e-9);  // kept, not reset
+  EXPECT_TRUE(room.Base(1)->origin);
+  bool said = false;
+  for (const auto& line : room.TakeLogs()) said |= line.find("model scales") != std::string::npos;
+  EXPECT_TRUE(said);
+  ASSERT_TRUE(room.Save(path));
+  std::ifstream in(path);
+  EXPECT_EQ(nlohmann::json::parse(in).at("rooms")[0].at("modelScale"), lh::runtime::Room::kModelScale);
+  RoomMap again;
+  ASSERT_TRUE(again.Load(path));
+  std::filesystem::remove(path);
+  for (const auto& line : again.TakeLogs()) EXPECT_EQ(line.find("model scales"), std::string::npos);
 }

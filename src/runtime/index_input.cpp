@@ -10,13 +10,22 @@ bool SameInput(const ControllerInput& a, const ControllerInput& b) {
                     c.trackpadClick, c.gripClick, c.menuClick,
                     c.systemTouch, c.aTouch, c.bTouch, c.triggerTouch, c.thumbstickTouch, c.trigger, c.thumbstickX,
                     c.thumbstickY, c.trackpadX, c.trackpadY, c.trackpadForce, c.gripForce, c.fingerIndex,
-                    c.fingerMiddle, c.fingerRing, c.fingerPinky);
+                    c.fingerMiddle, c.fingerRing, c.fingerPinky, c.mapped);
   };
   return key(a) == key(b);  // field-wise: the struct has padding bytes
 }
 }  // namespace
 
 bool ControllerInputDecoder::Apply(const InputReport& r, double hostTime) {
+  if (type_ == ControllerType::Mapped) {
+    // The whole record, every report: its bits are named by the device's input profile
+    // (the driver reads it). Anything else such a device sends is not ours to read.
+    if (r.format != InputFormat::Raw || r.raw.empty()) return false;
+    const bool changed = state_.mapped != r.raw;
+    state_.mapped = r.raw;
+    state_.hostTime = hostTime;
+    return changed;
+  }
   if (r.format == InputFormat::Raw) return false;
   const ControllerInput before = state_;
   auto& s = state_;

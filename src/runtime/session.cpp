@@ -26,6 +26,7 @@
 #include "index_input.hpp"
 #include "lh/input_sink.hpp"
 #include "mixed_light.hpp"
+#include "model_scale.hpp"
 #include "room_map.hpp"
 #include "room_solver.hpp"
 #include "rotor_reference.hpp"
@@ -147,6 +148,14 @@ bool IsIndexHint(const std::string& hint) {
 bool IsWandHint(const std::string& hint) {
   return hint.find("vive") != std::string::npos && hint.find("controller") != std::string::npos;
 }
+// Firmware that sends "mapped input" (raw records laid out by the device's own input
+// profile, e.g. Shiftall FlipVR): firmware_config.mapped_input, as the stock driver reads it.
+bool IsMappedInput(const json& j) {
+  if (!j.contains("firmware_config") || !j.at("firmware_config").is_object()) return false;
+  const auto& f = j.at("firmware_config");
+  return f.contains("mapped_input") && f.at("mapped_input").is_boolean() && f.at("mapped_input").get<bool>() &&
+         !j.value("input_profile", "").empty();
+}
 }  // namespace
 
 DeviceRole RoleFromConfig(const std::string& configJson) {
@@ -157,14 +166,17 @@ DeviceRole RoleFromConfig(const std::string& configJson) {
   if (Lower(j.value("tracked_controller_role", "")) == "generic_tracker") return DeviceRole::Tracker;
   if (cls == "controller") {
     const std::string hint = ModelHint(j);
-    if (IsIndexHint(hint) || IsWandHint(hint)) return DeviceRole::Controller;
+    if (IsIndexHint(hint) || IsWandHint(hint) || IsMappedInput(j)) return DeviceRole::Controller;
   }
   return DeviceRole::Tracker;
 }
 
 ControllerType ControllerTypeFromConfig(const std::string& configJson) {
-  const std::string hint = ModelHint(json::parse(configJson));
-  return !IsIndexHint(hint) && IsWandHint(hint) ? ControllerType::ViveWand : ControllerType::Index;
+  const json j = json::parse(configJson);
+  const std::string hint = ModelHint(j);
+  if (IsIndexHint(hint)) return ControllerType::Index;
+  if (IsWandHint(hint)) return ControllerType::ViveWand;
+  return IsMappedInput(j) ? ControllerType::Mapped : ControllerType::Index;
 }
 
 class SessionImpl final : public Session, public InputSinkBase {
@@ -303,6 +315,10 @@ class SessionImpl final : public Session, public InputSinkBase {
   struct LearnedImu { std::array<double, 3> accBias{}, accScale{1, 1, 1}, gyroBias{}; bool acc = false, scale = false, gyro = false; };
   std::map<DeviceId, LearnedImu> learnedImu_;
   std::set<DeviceId> learnedImuLogged_;
+  // lighthouse_scale.json reference objects, from {lighthouse} and each resource_root seen.
+  void ApplyModelScale(const DeviceId& id, const std::string& resourceRoot, TrackedObjectModel* model);
+  std::vector<ScaleReference> scaleRefs_;
+  std::set<std::string> scaleRoots_;
   void SaveSettings();
   void SetOutputTuning(double positionSmoothing, double rotationSmoothing, bool reportAcceleration) override;
   void SetMixedLight(const MixedLightOptions& options) override;
@@ -629,6 +645,7 @@ bool SessionImpl::SetUpDevice(const DeviceId& id, const std::string& config) {
     TrackedObjectModel model;
     std::string err;
     if (!TrackedObjectModel::FromJson(config, &model, &err)) throw std::runtime_error(err);
+    ApplyModelScale(id, j.value("resource_root", ""), &model);
     ApplyLearnedImu(id, config, &model);
     // A radio reconnect is a new timestamp/protocol epoch, not a duplicate attach.
     d.haveClock = false;
@@ -1572,6 +1589,33 @@ void SessionImpl::LoadLearnedImu(const std::string& path) {
 }
 
 // Only where the device's own config has none: its values are its factory calibration.
+void SessionImpl::ApplyModelScale(const DeviceId& id, const std::string& resourceRoot, TrackedObjectModel* model) {
+  for (const std::string root : {std::string("lighthouse"), resourceRoot}) {
+    if (root.empty() || !scaleRoots_.insert(root).second) continue;
+    const std::string dir = DriverResourceDirectory(root);
+    if (dir.empty()) continue;
+    std::ifstream in(std::filesystem::u8path(dir) / "lighthouse_scale.json", std::ios::binary);
+    if (!in) continue;
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<ScaleReference> refs;
+    std::string err;
+    if (!ParseScaleReferences(text, &refs, &err)) {
+      Emit(SessionEventType::Log, id, "{" + root + "}/lighthouse_scale.json: " + err, LogLevel::Warn);
+      continue;
+    }
+    Emit(SessionEventType::Log, id, "{" + root + "}/lighthouse_scale.json: " + std::to_string(refs.size()) + " reference objects", LogLevel::Info);
+    for (auto& r : refs) scaleRefs_.push_back(std::move(r));
+  }
+  const auto match = ApplyScaleReference(scaleRefs_, &model->points);
+  for (const auto& name : match.mismatched)
+    Emit(SessionEventType::Log, id, id + ": similar CAD but scale mismatch to reference object " + name, LogLevel::Info);
+  if (match.reference) {
+    char scale[32];
+    std::snprintf(scale, sizeof scale, "%.4f", match.reference->scale);
+    Emit(SessionEventType::Log, id, id + ": applying scale " + scale + " from reference object " + match.reference->name, LogLevel::Info);
+  }
+}
+
 void SessionImpl::ApplyLearnedImu(const DeviceId& id, const std::string& config, TrackedObjectModel* model) {
   const auto found = learnedImu_.find(id);
   if (found == learnedImu_.end()) return;
@@ -1807,6 +1851,7 @@ void SessionImpl::SetDeviceEnabled(const std::string& serial, bool enabled) {
     auto& d = found->second;
     TrackedObjectModel model;
     if (TrackedObjectModel::FromJson(d.info.configJson, &model)) {
+      ApplyModelScale(serial, d.info.resourceRoot, &model);
       ApplyLearnedImu(serial, d.info.configJson, &model);
       model.serial = serial;
       d.tracker = std::make_unique<DeviceTracker>(serial, model, &room_);
@@ -1841,6 +1886,7 @@ void SessionImpl::ResetRoomLocked(const std::string& why) {
     if (!d.tracker) continue;
     TrackedObjectModel model;
     if (!TrackedObjectModel::FromJson(d.info.configJson, &model)) continue;
+    ApplyModelScale(id, d.info.resourceRoot, &model);
     ApplyLearnedImu(id, d.info.configJson, &model);
     model.serial = id;
     d.tracker = std::make_unique<DeviceTracker>(id, model, &room_);

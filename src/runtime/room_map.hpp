@@ -46,6 +46,10 @@ struct Room {
   std::string source;             // "lh" or "steamvr"
   std::map<uint32_t, RoomBase> bases;
   double updated = 0;             // unix seconds, for choosing between rooms
+  // Device model scales (lighthouse_scale.json, as the stock driver applies them) the room was
+  // learned with: 0 = before openhouse applied them. kModelScale bumps when they change.
+  static constexpr int kModelScale = 1;
+  int modelScale = kModelScale;  // new rooms and SteamVR's (the stock driver applies them)
 };
 
 // Tilt in the stock representation: base-frame "up" = exp([pitch, 0, roll]) * +Y.
