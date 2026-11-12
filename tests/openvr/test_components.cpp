@@ -57,6 +57,15 @@ TEST(DeviceCommands, PowerOffWireFormat) {
   for (size_t i = 7; i < report.size(); ++i) EXPECT_EQ(report[i], 0);
 }
 
+// As stock and lighthouse_console send it to a quiet dongle: report ff, opcode a1, no data.
+TEST(DeviceCommands, ReceiverKeepaliveWireFormat) {
+  const auto report = lh::usb::ReceiverKeepaliveReport();
+  EXPECT_EQ(report.size(), 64u);
+  EXPECT_EQ(report[0], 0xff);
+  EXPECT_EQ(report[1], 0xa1);
+  for (size_t i = 2; i < report.size(); ++i) EXPECT_EQ(report[i], 0);
+}
+
 TEST(DeviceCommands, RoutesModernAndLegacyHapticsWithoutBroadcast) {
   vr::VREvent_t e{}; e.eventType = vr::VREvent_Input_HapticVibration;
   e.trackedDeviceIndex = vr::k_unTrackedDeviceIndexInvalid;

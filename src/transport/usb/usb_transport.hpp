@@ -148,6 +148,7 @@ class UsbTransport {
     int sensorType = -1;   // hardware id low byte (report 0x05), -1 unknown
     std::string path;      // hidapi path, unique while plugged in
     bool bluetooth = false;  // receiver's radio in Bluetooth mode: no device can connect
+    int keepalive = -1;      // last keepalive to a receiver with no device: 1 sent, 0 failed, -1 none yet
   };
   enum class OpenResult { Failed, Idle, Ready };
   // Opens and sets up one enumerated HID interface (Start and hotplug).
@@ -206,6 +207,8 @@ class UsbTransport {
   std::vector<PairCommand> pairing_;  // under hapticMutex_; read by the reader and probe threads
   // Run a pending pairing command for `o`'s receiver; true if one was sent.
   bool TakePairing(Open& o);
+  // The stock keepalive to a receiver with no device, each probe pass (logged when it changes).
+  void KeepAlive(Open& o);
   // A radio command for the thread that owns the receiver. set: the mode to switch to, or
   // nullopt to read it. result: the mode set or read, nullopt if that failed.
   struct RadioCommand {

@@ -482,6 +482,16 @@ bool UsbTransport::SetPairing(const std::string& receiver, int milliseconds) {
   return true;
 }
 
+void UsbTransport::KeepAlive(Open& o) {
+  // A VIVE Tracker 2018 didn't pair with a dongle we kept in pairing mode for over a minute,
+  // and did with lighthouse_console, which sends this to a quiet dongle (as stock does).
+  const auto report = ReceiverKeepaliveReport();
+  const int sent = hid_send_feature_report(o.dev, report.data(), report.size()) == int(report.size()) ? 1 : 0;
+  if (sent != o.keepalive)
+    Log(LogLevel::Info, "receiver %s: keepalive %s\n", o.receiver.c_str(), sent ? "sent" : "failed");
+  o.keepalive = sent;
+}
+
 bool UsbTransport::TakePairing(Open& o) {
   if (o.receiver.empty()) return false;
   PairCommand command;
@@ -605,6 +615,7 @@ void UsbTransport::ProbeMain() {
       serve();
       Open& o = idle_[i];
       if (o.bluetooth) { ++i; continue; }  // nothing can connect to it for now
+      KeepAlive(o);
       DeviceInfo di;
       if (!QueryDeviceInfo(o.dev, &di, 2) || di.serial == 0) { ++i; continue; }
       char sn[16];
