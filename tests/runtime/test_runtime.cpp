@@ -41,6 +41,7 @@ struct DeviceTrackerTestAccess {
   static void UpdateOutput(DeviceTracker& d) { d.UpdateOutput(); }
   static void Check(DeviceTracker& d, double now) { d.latestImu_ = now; d.CheckHealth(); }
   static void Acquired(DeviceTracker& d) { d.OnAcquired(); }
+  static void Frame(DeviceTracker& d, const OpticalFrame& f) { d.HandleFrame(f); }
 };
 }
 
@@ -588,6 +589,46 @@ TEST(DeviceRecovery, OcclusionCoastsForTheStockTimeoutAndKeepsCalibration) {
   bool epoch = false;
   for (const auto& line : tracker.TakeLogs()) epoch |= line.find("no forward light") != std::string::npos;
   EXPECT_TRUE(epoch);
+}
+
+// Switching LH1 -> LH2 mode, the last sorted frames reached the filter 0.17-0.31 s late, behind the
+// time the IMU had carried it to, and the LH2 light only came 0.5-1.5 s after the switch. Light the
+// filter skips for being late isn't light that doesn't fit: it used to restart tracking 0.45 s in
+// (live: 12 of 45 such switches). Light that comes in time and is refused still does.
+TEST(DeviceRecovery, LateLightIsNotRefusedLight) {
+  TrackedObjectModel model;
+  model.points = {{{-0.08, -0.07, -0.02}}, {{0.08, -0.07, 0.02}}, {{-0.08, 0.07, 0.03}},
+                  {{0.08, 0.07, -0.03}}, {{0, 0, 0.08}}, {{0.04, 0.01, -0.06}}};
+  model.normals.assign(6, {0, 0, 1});
+  for (int i = 0; i < 6; ++i) model.channelToIndex[i] = i;
+  RoomMap room;
+  DeviceTracker tracker("LHR-SWITCHING", model, &room);
+  BaseConfig base;
+  base.valid = true; base.serial = 1; base.cal.assign(14, 0.0);
+  tracker.OnBaseConfig(base, {});
+  LighthouseDirect::Seed seed;
+  seed.base = 1; seed.calibrated = true; seed.time = 10.0;
+  seed.baseFromImu.translation() = Eigen::Vector3d(0, 0, -2);
+  ASSERT_TRUE(DeviceTrackerTestAccess::Core(tracker).SeedPose(seed));
+  auto frame = [](double t, int axis) {
+    OpticalFrame f;
+    f.baseSerial = 1; f.axis = axis; f.syncTime = t; f.leftSyncIsReal = f.rightSyncIsReal = true;
+    for (int i = 0; i < 6; ++i) f.samples.push_back({i, axis, t + 0.004, 0.5, 1e-5});
+    return f;
+  };
+  auto restarted = [&] {
+    bool r = false;
+    for (const auto& line : tracker.TakeLogs()) r |= line.find("none fits the pose") != std::string::npos;
+    return r;
+  };
+  for (int i = 0; i < 12; ++i) DeviceTrackerTestAccess::Frame(tracker, frame(9.7 + 0.008 * i, i & 1));  // late
+  DeviceTrackerTestAccess::Check(tracker, 10.6);
+  EXPECT_TRUE(DeviceTrackerTestAccess::Core(tracker).Bootstrapped());
+  EXPECT_FALSE(restarted());
+  for (int i = 0; i < 12; ++i) DeviceTrackerTestAccess::Frame(tracker, frame(10.62 + 0.008 * i, i & 1));  // in time
+  DeviceTrackerTestAccess::Check(tracker, 10.8);
+  EXPECT_FALSE(DeviceTrackerTestAccess::Core(tracker).Bootstrapped());
+  EXPECT_TRUE(restarted());
 }
 
 TEST(DeviceRecovery, InvalidImuCalibrationIsNeverCarriedOver) {
@@ -1177,6 +1218,8 @@ TEST(MixedLight, SettingsFileTurnsItOnWithItsOptions) {
   EXPECT_TRUE(m.controllers);
   EXPECT_FALSE(m.trackers);
   EXPECT_FALSE(m.scout);
+  EXPECT_FALSE(m.preferLh2) << "LH1 mode once the rotors are known, unless asked";
+  EXPECT_TRUE(MixedFromSettings(R"({"mixedLight": {"enabled": true, "preferLh2": true}})").preferLh2);
 }
 
 TEST(MixedLight, SettingsFileAcceptsABool) {

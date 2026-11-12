@@ -496,3 +496,51 @@ TEST(TrackingSourceSorting, LearnsBeforeItSortsAndIsReadyWhenItDoes) {
   ASSERT_EQ(source.Rotors(t).size(), 1u);
   EXPECT_TRUE(source.Rotors(t)[0].ready);  // the same line, kept
 }
+
+// 1.0 flashes keep a schedule: a pair (two stations, b and c) every half revolution.
+namespace {
+
+void FlashPairs(PulseSorter& sorter, double from, int slots) {
+  int channel = -1;
+  double t = 0;
+  for (int k = 0; k < slots; ++k) {
+    EXPECT_EQ(sorter.Sort(from + k / 120.0, 94e-6, 1, &channel, &t), PulseSorter::Result::NotOurs);
+    EXPECT_EQ(sorter.Sort(from + k / 120.0 + 413e-6, 115e-6, 1, &channel, &t), PulseSorter::Result::NotOurs);
+  }
+}
+
+}  // namespace
+
+TEST(PulseSorterFlashes, ALongHitOffTheFlashScheduleIsDropped) {
+  PulseSorter sorter;
+  FlashPairs(sorter, 10.0, 60);
+  const auto flashes = sorter.Stats().syncWidth;
+  int channel = -1;
+  double t = 0;
+  // 70 us long, 3 ms into a sweep: a 2.0 hit close to its station, not a flash.
+  EXPECT_EQ(sorter.Sort(10.0 + 59 / 120.0 + 3e-3, 70e-6, 5, &channel, &t), PulseSorter::Result::Dropped);
+  EXPECT_EQ(sorter.Stats().offSchedule, 1u);
+  EXPECT_EQ(sorter.Stats().syncWidth, flashes);
+  FlashPairs(sorter, 10.0 + 60 / 120.0, 1);  // the next real flashes still count
+  EXPECT_EQ(sorter.Stats().syncWidth, flashes + 2);
+}
+
+TEST(PulseSorterFlashes, AfterAGapAnyFlashStartsTheScheduleAgain) {
+  PulseSorter sorter;
+  FlashPairs(sorter, 10.0, 30);
+  int channel = -1;
+  double t = 0;
+  // 1.0 light gone for 30 ms (occluded), back at another phase: a new schedule, not a stray pulse.
+  EXPECT_EQ(sorter.Sort(10.0 + 29 / 120.0 + 0.030 + 3e-3, 94e-6, 1, &channel, &t), PulseSorter::Result::NotOurs);
+  FlashPairs(sorter, 10.0 + 29 / 120.0 + 0.030 + 3e-3 + 1 / 120.0, 5);
+  EXPECT_EQ(sorter.Stats().offSchedule, 0u);
+}
+
+TEST(PulseSorterFlashes, FlashesOnAnotherScheduleAreLeftAloneWhereTheyKeepIt) {
+  PulseSorter sorter;
+  sorter.SetFlashSchedule(false);  // lhbs multi-station
+  int channel = -1;
+  double t = 0;
+  for (int k = 0; k < 50; ++k) EXPECT_EQ(sorter.Sort(10.0 + k * 0.010, 94e-6, 1, &channel, &t), PulseSorter::Result::NotOurs);
+  EXPECT_EQ(sorter.Stats().offSchedule, 0u);
+}

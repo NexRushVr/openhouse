@@ -123,6 +123,7 @@ Settings are in `~/.config/lh/` on Linux and `%APPDATA%\lh\` on Windows.
 ```
 `roles` changes a device's role (`left_hand`, `right_hand` or `generic_tracker`, for example a Vive controller on your hip as a tracker), `controllers` picks which controller is left and right, and `disabledDevices` makes openhouse ignore a device completely.
 `hideLostDevices` makes controllers and trackers disappear while they've lost tracking, kinda like the stock driver, instead of staying where they were last seen (off by default). Under SteamVR it's **Hide lost controllers and trackers** in openhouse's settings page
+**Use SteamVR's rooms** (SteamVR's settings page, on by default) keeps openhouse in step with SteamVR's own room files, so Room Setup isn't asked for on every start. If you already did Room Setup with SteamVR's driver for the same basestations, openhouse uses that room (its play area and standing height). Otherwise openhouse adds its room to SteamVR's `lighthousedb.json` (a backup of the original is kept as `lighthousedb.json.openhouse-backup`), so Room Setup is done once and remembered, and other apps that read SteamVR's room see where the basestations are. SteamVR's own rooms are never changed. Turn it off (and restart SteamVR) to keep openhouse's room completely separate from SteamVR's, as in 1.0.2.
 `mixedLight` (experimental, off by default) uses HTC Vive 1.0 and 2.0 base stations together in one room; `"mixedLight": true` is enough to turn it on. Under Monado and WiVRn this is the only switch. Under SteamVR the same options are at the end of openhouse's page in SteamVR's settings: this file only fills them in the first time, after that the page wins.
 - `preinit/` is optional. Device configs in it (`<serial>.json`) are created when openhouse starts and show up as connected but not tracking until you turn them on (after that they connect and disconnect normally), even under Monado, which only takes devices at startup. Save the configs of your connected devices with `lhtool configs ~/.config/lh/preinit` (close SteamVR/Monado first, turn everything on). If a device's own config differs from its file, openhouse uses the device's and updates the file.
 
@@ -133,7 +134,7 @@ In SteamVR's settings there is an **openhouse** page (Settings > openhouse, you 
 - **Position smoothing** and **Rotation smoothing** are how long a tracking correction takes to show up, 60 ms by default. Lower means less delay, but small corrections can show up as tiny jumps. 0 turns it off.
 - **Record Session (disable to save)** records your devices' raw data while it's on. When you turn it off, it saves a bug report zip with that recording (see below). The recordings themselves stay in `~/.local/share/openhouse/recordings` on Linux and `%LOCALAPPDATA%\openhouse\recordings` on Windows.
 - **Reset room** throws away the learned room and learns it again from scratch. Use it if you moved your basestations around and the room doesn't fix itself. It turns itself back off.
-- **Enable Mixed Basestations** and the three **Mixed Basestations** toggles below it, see [Mixed basestations](#mixed-basestations-experimental). Off by default.
+- **Enable Mixed Basestations** and the toggles that show up under it while it's on, see [Mixed basestations](#mixed-basestations-experimental). Off by default.
 
 Changes apply while you play, within a second.
 
@@ -141,6 +142,8 @@ Changes apply while you play, within a second.
 openhouse can use HTC Vive 1.0 and 2.0 basestations together in one room, which SteamVR can't. Turn it on with **Enable Mixed Basestations** in SteamVR's settings, or `"mixedLight": true` in `settings.json` under Monado and WiVRn. Things to know:
 - **Devices that do not work with 2.0 lighthouses can't be used** which includes the original HTC Vive headset, Vive wands and the 2017 Vive trackers (ones with gray power button instead of blue)
 - **The headset will stay on 2.0 mode at all times.** It times the 2.0 basestations for the other devices (the "headset times the 2.0 stations" toggle), so controllers and trackers have to switch less often. Switching that toggle off will cause the headset to blank the view every time a switch happens, so keep that in mind
+- **The headset also measures the 2.0 basestations' timing for the other devices** (the "headset measures the 2.0 stations' timing wobble" toggle, on by default). A 2.0 basestation's rotor doesn't spin perfectly evenly, and in mixed mode that shows up as a small wobble on controllers and trackers. The headset sees the real timing, so the others take that wobble off while the headset can see the same basestation
+- **"Use the 1.0 stations only while the 2.0 stations don't light a device well"** is a test, off by default: devices stay on 2.0 light while they can, which is steadier, and only read the 1.0 basestations when the 2.0 ones don't cover them
 - **The first few minutes might be a bit problematic** as openhouse has to work out whether you're in a mixed room at all, so tracking can be shakier during the first session.
 - **It takes longer to settle.** In a mixed room, learning the room's layout takes a bit more time than with one kind of basestation. That is normal, and give it some time while the room is learned
 - If you encounter a problem with the room map or tracking, **click "Reset Room" on SteamVR or remove the roommap.json file in ~/.config/lh in Linux**
@@ -159,8 +162,8 @@ You don't need any of these normally. On Linux, put them in SteamVR's launch opt
 | `LH_STOCK_DRIVER=PATH` | Where SteamVR's original driver is, if it's not next to ours |
 | `LH_STOCK_ALL_DEVICES=1` | Let SteamVR's driver see every device, not only the headset. Not recommended as it causes issues with tracking |
 | `LH_ROOM_MAP=FILE` | Use another room file |
-| `LH_STEAM_DB=auto` | Import the basestation positions from SteamVR's own room (or `=FILE`) |
-| `LH_HOST_FRAME=steamvr` | Use SteamVR's own play space instead of openhouse's (`LH_REFERENCE_DB=FILE` for the room file it uses) |
+| `LH_STEAM_DB=auto\|-` | Import the basestation positions from SteamVR's own room (or `=FILE`); `-` never imports. Under SteamVR it's on with **Use SteamVR's rooms** |
+| `LH_HOST_FRAME=steamvr\|openhouse` | `steamvr`: always use SteamVR's own play space (`LH_REFERENCE_DB=FILE` for the room file it uses). `openhouse`: always openhouse's, and SteamVR's room files are left alone (as **Use SteamVR's rooms** off) |
 | `LH_MULTISTATION=on\|off` | Force the lhbs multi-station mode on or off for 1.0 basestations |
 | `LH_PREFER_STEAM_CONFIG=1` | Use SteamVR's cached device configs instead of reading them from the devices |
 | `LH_STEAM_ROOT`, `LH_STEAM_CONFIG_DIR`, `STEAMVR_PATH` | Where Steam and SteamVR are, if they can't be found |

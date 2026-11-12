@@ -60,6 +60,10 @@ class PulseSorter {
   // Calls emit(time, channel, generation) for each predicted beam word up to `upTo`.
   void DueBeamWords(double upTo, const std::function<void(double, int, int)>& emit);
 
+  // 1.0 flashes keep to their stations' schedule, so a flash-long pulse off it is a long 2.0 hit, dropped.
+  // Off where the 1.0 light keeps another schedule (lhbs multi-station).
+  void SetFlashSchedule(bool on) { flashSchedule_ = on; }
+
   void SetPose(PoseView view, ChannelBase base) {
     poseView_ = std::move(view);
     channelBase_ = std::move(base);
@@ -67,6 +71,7 @@ class PulseSorter {
 
   struct Counters {
     uint64_t byTrack = 0, byBurst = 0, dropped = 0, notOurs = 0, syncWidth = 0, beams = 0, reacquired = 0, byLh1 = 0;
+    uint64_t offSchedule = 0;    // flash-long pulses off the 1.0 flash schedule, dropped
     // What the pose did to timing's answer.
     uint64_t poseAgreed = 0, poseMoved = 0, poseVetoed = 0, poseTied = 0, poseUntrusted = 0;
   };
@@ -165,6 +170,7 @@ class PulseSorter {
   std::array<Burst, 2> lh1Bursts_{};
   double lastFlash_ = -1;
   int flashIndex_ = 0;
+  bool flashSchedule_ = true;  // SetFlashSchedule
   std::deque<double> unclaimed_;  // times of recent pulses nobody claimed
   double nextReacquire_ = 0;
   PoseView poseView_;

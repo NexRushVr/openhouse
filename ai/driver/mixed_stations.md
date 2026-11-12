@@ -112,6 +112,176 @@ as far from where the pose puts it as LH2 words do, per hit in the frames the fi
 0.5 mrad more for a 1.0 hit brought it near LH2 mode's. Weighting one kind alone didn't help: the other
 then counted for more.
 
+**The rotor's wobble** (`tracking/rotor_wobble.hpp`, `LighthouseDirect::FollowRotorWobble`, while in use).
+Trackers lying still (2026-11-11, a 2018 and a 3.0 tracker, two 1.0 and three 2.0 stations) swayed 0.22-0.41 mm
+rms in LH1 mode against 0.07-0.12 mm in LH2 mode, nearly all of it below 5 Hz (a 2-3 Hz sway of up to 1 mm),
+whatever the weights: the light itself moves. A sorted hit's angle is its time since a beam word predicted
+from the rotor's line, and the rotor doesn't keep to a line. Real beam words (any device in LH2 mode, every
+rotor) sit 0.25-0.3 us rms off a line through the last 5 s, 0.09 mrad, smoothly over several revolutions
+(0.11 us between one and the next; most of it at 1-8 Hz). An LH2 word carries its own angle, so LH2 mode has
+none of this. In LH1 mode both planes' hits are off by the same angle: frames' means wandered 0.09-0.17 mrad
+(the two planes of a rotor alike, r = 0.96; two rotors apart, r = 0.2) while the sensors within a frame kept
+to 0.02-0.07 mrad of one another, as LH2 words do. The headset's real words for the same rotor explain part
+of it (slope 0.94-1.0, r = 0.6: 0.127 to 0.101 mrad), so more than the rotor is in it. A 1.0 station's frames
+don't wander (0.02-0.03 mrad). So each rotor's offset is followed from what a frame's sorted hits have in
+common against the pose, as far as the pose is known better than the offset (0.3 mrad, fading over 0.2 s),
+and comes off the hits before the filter takes them (at first what was unsure of it also went onto them as
+scatter they share: below). A pose just reacquired or swinging is unsure, and the light then corrects it as
+before. Replayed
+(still jitter, median rms over 0.5 s, four stretches): the 3.0 tracker 0.38, 0.22, 0.28, 0.27 mm to 0.25,
+0.44, 0.12, 0.12; the 2018 tracker 0.41, 0.27, 0.37, 0.33 to 0.37, 0.27, 0.30, 0.26. Moving, the output
+is within 1.3 ms of before (the shift that best explains the difference, at 0.3-3 m/s). What it can't do:
+the pose still has to come from somewhere, and with the wobble out the rest of the light (the planes'
+difference, the frame's shape, the 1.0 stations) holds it less firmly than LH2 words would. Passing the
+headset's wobble to the others (it hears the real words) would take out about a fifth more; not built.
+
+What the follower cost the 2018 tracker (replays of six recordings, 1.0 hits at 0.5 mrad): good pose 99.9 to
+99.0 % lying still, 94.4 to 88.2 % carried about, jumps 0.4 to 5.8 a minute in a third. Two things in it did
+that, neither the taking out of the offset:
+
+- *The shared scatter.* What was left unsure of the wobble went onto the rotor's hits as scatter they share,
+  so a frame's mean counted for less: by 0.3 mrad while the wobble isn't followed (a fresh pose, thin light),
+  0.12-0.15 mrad while it is. A frame's mean is what holds a pose that little else lights, and the 2018
+  tracker is the device that is there: one rotor alone held it for 24-28 % of its time on sorted light in
+  three recordings, and a 1.0 station (4F45E949) is refused for it for stretches. Just after its first switch
+  to LH1 mode, with one rotor's 3-4 sensors a frame and a 1.0 station newly added, its IMU calibration ran
+  off (15 deg) and tracking reset: in 8 replays of 8 with the shared scatter (as it was, capped at 0.15 mrad,
+  with the offset left in, 1.0 hits at 0.49-0.52 mrad), 0 of 9 without. It gave no steadiness either: still jitter of the
+  3.0 tracker and the Knuckles 0.25, 0.23, 0.23 mm without the follower, 0.16, 0.11, 0.12 with it, 0.17,
+  0.12, 0.12 with the offset taken out and no shared scatter, 0.24, 0.22, 0.21 with the shared scatter
+  alone. The hits' weights now stay as they were.
+- *Frames of two hits.* Two sensors within 0.5 mrad of the median were enough for a frame's mean. Where a
+  device has 2-3 sensors a frame of a rotor, the hits sat 1-2 mrad apart and the means swung +-1 mrad from
+  frame to frame; following that, the tracker lying still slid 1 m and was lost for 2.6 s. Now three
+  (`direct::HitsInCommon`).
+
+After both (1.0 hits at 0.5 mrad; before the follower, with it as it was, now): the 2018 tracker lying still
+100.0, 99.0, 100.0 % and 0.32, 0.33, 0.29 mm; carried about 94.4, 88.2, 94.3 %; the third recording's jumps
+0.4, 5.8, 5.8 a minute (below). Still jitter of the others, the same three: 3.0 tracker 0.25, 0.16, 0.17 mm
+(0.19, 0.07, 0.08 and 0.19, 0.10, 0.11 in two more recordings, 0.25, 0.17, 0.22 in the one carried about);
+Knuckles 0.23, 0.11, 0.13 and 0.23, 0.12, 0.12 (0.23, 0.18, 0.14 and 0.19, 0.11, 0.15).
+
+Read the 2018 tracker's counts with care: they are decided at a few moments that go either way. Without the
+follower, 1.0 hits at 0.49 or 0.52 mrad instead of 0.5 lose the still recording's 100.0 % (99.3 %, the 1 m
+slide above), and 0.49 brings the third recording's 5.8 jumps a minute: there a watchdog reacquires on
+hits sorted to a rotor the tracker doesn't see (0.3-2.6 rad off the pose), 0.08 s earlier or later, and
+lands on those hits (a pose 6 m off for 6 s) or on a 1.0 station. At 0.5001 and 0.4999 mrad nothing
+changes, so it isn't noise in the replay, but a change that moves the pose by a hair can flip them. Two
+Knuckles shaken hard, with a 1.0 station 17-20 cm off in the map: the left one 99.9 % at 0.5 mrad, 92.5 %
+at 0.501, with or without the follower.
+
+Tried and not kept: counting, for how well the pose is known, only what the filter knows from other light
+than the rotor's own (its variance there is mostly from the very hits the offset comes out of, and the
+follower does take about nine tenths of an offset that stays, not only the wobble: its value followed -1.7
+mrad for seconds). It settled none of the 2018 tracker's moments (the third recording's jumps 0.4 a minute at
+0.5 mrad but 5.8 at 0.49, where the still recording also fell to 99.2 %) and gave back a third of the
+others' steadiness (0.17, 0.13, 0.12 mm to 0.19, 0.17, 0.15).
+
+**More stations than slots** (`lh::SlotToGiveUp`, `LighthouseDirect::AddKnownAltBase`). The filter holds four
+stations, the primary and three others, and a device on both kinds of light can see more: two 1.0 and three
+2.0 here. Whichever lit it first took the last slot and kept it while tracking held, lit or not, and which of
+two 1.0 stations came first hung on a pulse. In one replay the 2018 tracker's last slot went to the 1.0
+station that then gave it 1-3 frames a second, none used, and the other's 60 frames a second (2-3 sensors) had
+no slot: on one plane of one rotor besides, lying still, it slid 1.8 m in 9 s with every frame taken, then
+was lost for 7 s. Now, with every slot taken, a station lighting three sensors
+or more takes the place of the one whose light was last used longest ago (a frame of three hits or more), if
+that is over 2 s ago, entering from the room map as any station does; the one put out comes back the same way
+(logged: "in place of ..., which gave no light"; 2-9 times a recording, all devices together). The 2018
+tracker carried about, good pose without and with this: 88.2 to 91.1 % with the follower as it was, 87.8 to
+91.1 % with it as it is and 1.0 hits at 0.49 mrad, where the slot went wrong; where it happened to go right,
+94.3 to 91.2 % (and 94.4 to 91.1 % without the follower). With it, 91.1-91.2 % in all eight builds tried.
+Those 3 points are one stretch of 9 s after a hard swing: without this the tracker shows a pose there,
+from a reacquire on a 1.0 station, that ends 1.2 m from where the 2.0 light puts it 1.5 s later; with it, that
+pose is refused after 1 s and none is shown until the 2.0 light is back. Which is nearer the truth isn't
+known (it was moving at 0.5-1 m/s). Lying still: the 2018 tracker's losses 2 to 1, the 3.0 tracker's 3 to 2
+and good pose 99.7 to 99.9 %, its still jitter 0.17 to 0.20 mm (not looked into).
+
+**The rotor's wobble, measured in LH2 mode** (`MixedLightOptions::rotorReference`, "Headset measures the 2.0
+stations' timing wobble for the other devices", on by default, under "Headset times the 2.0 stations";
+`runtime/rotor_reference.hpp`; replay `--mixed-no-rotor-reference` to leave it out). Measured in replays of four recordings of 2026-11-11 (debug dumps of every beam word
+and every frame's raw angles, not kept):
+
+- The wobble is the station's own. Two devices in LH2 mode on one rotor at once saw the same (r 1.00, 0.005 mrad
+  apart against 0.08-0.09 mrad), so it isn't the devices' clocks.
+- It can't be told from its own past: an AR(10) on 20 ms steps predicts 80 % of it 20 ms ahead, 25 % at 60 ms,
+  5-10 % at 120 ms (AR(1) time 0.11-0.15 s; 1-8 Hz much alike).
+- Devices lying still in LH1 mode, raw angles (off each sensor's median): a frame's sorted hits had 0.07-0.09 mrad
+  in common, and the headset's beam words for that rotor at that moment explained it (r 0.90-0.97, slope
+  0.89-1.00, the 2018 tracker too), leaving 0.017-0.032 mrad, as LH2 words' 0.018-0.021.
+- The follower doesn't follow it: its estimate went with the headset's r 0.1-0.56, as a frame's offset against
+  the predicted pose does, most of which is the pose. Its spread and memory set to the measured wobble's (0.09 or
+  0.15 mrad, 0.13 s) made still jitter worse everywhere (Knuckles 0.13 to 0.16-0.18 mm, a 3.0 tracker 0.08 to
+  0.11-0.14, the 2018 tracker 0.27 to 0.36).
+- The headset had the rotor in view for 64-93 % of the trackers' sorted frames, per recording (9-99 % per rotor);
+  other devices in LH2 mode add 0-5 %. Beam words reach the session 10 ms after they're sent (p99 20 ms), and a
+  revolution's word comes before its hits, so a frame needn't wait for it.
+
+So each device in LH2 mode measures every rotor it sees against that rotor's line over the last 5 s, word by word
+(`RotorReference`, on the session's clock through each device's clock offset), and a device in LH1 mode takes
+the offset at a frame's time (between two words, or within 30 ms of one) off that frame's sorted hits
+(`DeviceTracker::HandleFrame`, `kSampleReferenced`). The follower leaves such frames alone. Replays without it and
+with it, still jitter in LH1 mode (filter, median, mm):
+
+| | 14:41 | 16:46 | 13:02 |
+|---|---|---|---|
+| 2018 tracker | 0.27 to 0.23 | 0.31 to 0.27 | 0.16 to 0.12 |
+| 3.0 tracker | 0.20 to 0.15 | 0.08 to 0.05 | 0.22 to 0.22 |
+| Knuckles | 0.13, 0.12 to 0.11, 0.10 | 0.13, 0.15 to 0.11, 0.10 | |
+
+In 09:47 and the shake recording jitter and losses didn't change. LH2 mode is 0.05-0.06 mm for Knuckles, so most
+of what's left isn't the wobble; not looked into. What it cost: at 14:41 the 2018 tracker was lost 3 times
+against once (its IMU calibration ran off 3.6 s after it reacquired, and it reacquired once after coasting where
+before it came back), good pose 100.0 to 99.9 %, its largest step at a change of light mode 27 to 74 mm; at 13:02
+the 3.0 tracker jumped 9.0 times a minute against 7.2 (good pose 79.4 to 79.8 %); at 09:47 the 3.0 tracker's
+largest step at a change of light mode 15 to 53 mm. The 2018 tracker's 14:41 counts swing with any small change
+(above), and so they did here:
+
+- The follower on corrected frames as well (its own state for them or not): the 2018 tracker 0.37 mm at 14:41,
+  lost twice; the others between the two.
+- Corrected hits weighted less loosely than sorted ones (0.5, 0.2, 0 us for 1 us): Knuckles 0.09-0.10 mm, the
+  2018 tracker 0.23, 0.20, 0.17 mm at 16:46, but at 14:41 lost 2, 3 and 6 times. Left at 1 us.
+- No correction in a device's first 800 updates: the 2018 tracker 0.35 mm at 14:41 and lost twice.
+
+Logged every 6000 frames of sorted hits per device: "rotor reference: N % of M frames of sorted hits corrected
+so far" (72-100 % in these replays). Live 2026-11-11 21:12-21:15, on for the first 73 s: the 3.0 tracker "near 2.0
+only" by eye; replayed, its still jitter in LH1 mode 0.12 mm off, 0.06 on (0.05-0.06 in LH2 mode), the 2018 tracker
+0.20 to 0.15, Knuckles 0.13 and 0.19 to 0.11 and 0.15, with the same losses and restarts and 88-89 % of frames
+corrected. On by default since. The driver writes it into SteamVR's settings once (marker
+`mixedLightRotorReferenceDefaultWritten`): a key SteamVR has no default for can read off with no error.
+
+**LH2 mode while the 2.0 light is enough** (`MixedLightOptions::preferLh2`, "use the 1.0 stations only while
+the 2.0 stations don't light a device well", a test, off; `runtime::ChooseMixedLight`). A replay
+can't show it (its modes are the recording's): unit tests only. LH2 mode has no wobble, so the surest way
+to LH2 mode's steadiness is to be in it: the same trackers, lying in the same place, 0.07-0.12 mm against
+0.12-0.36 mm with the wobble followed. With this a device whose rotors are known stays in LH2 mode while a
+2.0 station lights it well (at first one station lighting 4 sensors a frame in 20 frames of the last 0.5 s, a pose by itself; below),
+goes to LH1 mode when none has for 0.25 s or it has been lost for 1 s (10-20 ms to the first pulse), and
+comes back after 10 s of such light without a break, at a calm moment, 20 s in LH1 mode at the least
+(0.2-0.5 s without light, so at worst one such gap every 20 s). In the still recording the trackers had
+such light for 76-89 % of their time in LH1 mode, in one where they were carried about 65-74 %, and for
+90-93 % of the LH2 stretches the 0.07-0.12 mm is from. What it costs is the 1.0 light while the 2.0 light
+looks enough: a device whose one 2.0 station is covered goes about 0.5 s on the IMU before the 1.0 light is
+there, where in LH1 mode it would have had it throughout.
+
+Live 2026-11-11 (trackers and Knuckles lying still, switch on for 3 min): in LH2 mode the 2018 tracker
+swayed 0.17 mm (median, p90 0.38) against 0.50 mm in LH1 mode, the 3.0 tracker 0.08 against 0.12 mm, the
+Knuckles 0.01-0.05 mm (p90) against 0.12-0.25 mm. But the devices were in LH2 mode only 53-65 % of the time.
+The rule asked for one station to light 4 sensors a frame, and Knuckles lit 3-4 sensors a frame by each of
+two stations fell short of it while tracking 93-97 % of the time: they left after 2.6-11 s and waited 20 s
+to come back. Now the stations count together (`runtime::Lh2LightEnough`: 80 sensor hits in 0.5 s, from
+stations seen in 10 frames with 3 sensors a frame); in the replay it held for 98-100 % of the time each
+device was tracking, against 83-99 %, and kept all 9 stretches in LH2 mode where 3 had left. Three more
+stretches ended "visit over" 27-87 s in: a rotor heard again ("learning 1") put the device back under a visit's
+time limit, long past. While the 2.0 light is enough it now stays and learns the rotor there.
+
+**Losses on going to LH2 mode** (live 2026-11-11, preferLh2 test): 6 of 29 visits and 6 of 16 switches
+for enough 2.0 light lost the device for 0.1-1.2 s, "light keeps arriving but none fits the pose: reacquiring"
+0.45 s after the switch. The last sorted frames reached the filter 0.17-0.31 s after their sweep (LH2 words
+take 70 ms, p99 95 ms), behind the time the IMU had carried it to (`inertialLag_`, 0.12 s), and were skipped
+unread; the LH2 light itself came 0.5-1.5 s after the switch. Counted as refused light they tripped
+`kRefusedLightReset` first. They aren't counted now: in the replay of the one such loss the 3.0 tracker
+coasted 1.3 s instead, within 8 mm, and was 0.8 mm from where it had been once the light came.
+
 **lhbs multi-station** auto-detection waits while sorting (`TrackingSource::UseMulti`), as it was off
 (`LH_MULTISTATION=off`) for every test here. The room's lone stock 1.0 station (channel A, no cable) tripped
 it even with the 2.0 stations off: "multi-station layout detected (0 multi / 0 stock flash pairs)", through
@@ -170,11 +340,54 @@ in either light mode (LH2 mode with clipping: 12-52 cm), so it isn't this code's
 * 1.0-only devices (original Vive headset, Vive wands, 2017 Vive Tracker) get nothing from this, and are
   ignored once they show themselves (above). The detection worked live on a Vive wand; an original Vive
   headset, which would then lose tracking, wasn't at hand.
-* With the switch off, master's light-mode choice runs, and in a room of both kinds it puts devices in LH1
-  mode unsorted, starving the others (above). So with the switch off a 1.0-only device turned on there
+* With the switch off, the usual light-mode choice runs (`runtime::ChooseLightMode`), and in a room of both
+  kinds it starts devices in LH1 mode unsorted, starving the others (above). Unlike master, a device that has
+  sent 2.0 light stays in LH2 mode while any device sees 2.0 light (`kLh2Lit`, 10 s). Master sent it to LH1
+  mode after 2.5 s without light, and the 1.0 light then held it there: in a recording (2026-11-11), a
+  tracker dark for 2.5 s just after the switch-off had a good pose for 38 % of the next two minutes in the
+  replay, against 95 % for the tracker beside it, still in LH2 mode. A device out of the 2.0 stations' view
+  now waits in the dark instead. A 1.0-only device turned on there with the switch off still
   breaks the headset's tracking, as it does on master; with it on, it's ignored once detected (live: the
   headset recovered within a few seconds of turning a wand on).
-* Trackers, several 1.0 stations, sync cables and lhbs multi-station alongside 2.0 stations: untested.
+* LH1 frames go into keyframes for the room map only while their light can be trusted
+  (`runtime::Lh1KeyframesUsable`): with 2.0 light about (a beam word from any device within 10 s), only from
+  a device that sorts and knows a rotor, heard within 180 s, for every 2.0 station seen this session. An LH1
+  frame takes every pulse in its sweep window, so a 2.0 sweep the device doesn't sort becomes wrong angles.
+  The filter drops those; the room solver took them. In a recording (2026-11-11, two 1.0 stations in b/c,
+  three 2.0, two trackers), the unsorted stretches (the replay starting mid-session before any rotor was
+  learned, and a tracker stuck in LH1 mode after the switch-off) put 40-55 % of the trackers' 1.0 samples
+  10 mrad to 0.8 rad off, and the solver loosened and relearned the 1.0 stations (live too, after the
+  switch-off). With this the room solve's fit went from 0.26-0.29 rad to 1.4 mrad, tracking unchanged with
+  the switch on. Replays of rooms without 2.0 light are byte-identical. While sorting, the trackers made no
+  keyframes at all in that recording; why isn't known.
+* Trackers, sync cables and lhbs multi-station alongside 2.0 stations: little tested. PulseSorter's 1.0 model
+  times two slots (`flashIndex_ & 1`); a pair of 1.0 stations in b/c sweeps in four (b0 b1 c0 c1).
+* Leaks while sorting, measured 2026-11-11 by each 1.0 sample against the pose (two 1.0 stations in b/c,
+  three 2.0, a 2018 and a 3.0 tracker): with every rotor known, 22 % of the 2018 tracker's 1.0 samples were
+  over 20 mrad off, 7 % of the 3.0's; whole frames of them were 2.0 sweeps. Two causes:
+  - The 2018 tracker's 2.0 hits run longer (0.43 % past 56 us, against 0.09 % for the 3.0; more so close to a
+    station), and a pulse of flash width counted as a 1.0 flash: 10.5 % of its "flashes" were off the 1.0
+    schedule (3.3 % for the 3.0), each starting the 1.0 timing afresh mid-sweep and passed on unsorted. Now a
+    flash-long pulse off the schedule (more than 0.5 ms from a multiple of 1/120 s after the last flash, within
+    20 ms of it) is dropped (`PulseSorter::SetFlashSchedule`; off on the lhbs multi-station path, whose flashes
+    keep another schedule). Bad samples with every rotor known: 2018 tracker 22 % to 7.5 % (5 % with two
+    known), 3.0 7.4 % to 2.1 %. Its good pose 77.6 to 80.6 %, losses 12 to 9; the extra acceleration spikes
+    (35 to 45) were all in four reacquires falling elsewhere. Other replays unchanged. A share-of-flashes
+    guard instead of the multi-station switch turned it off just when the false flashes were many.
+  - Rotors not yet learned: a device goes to LH1 mode knowing the rotors seen on its visit (capped at 8 s, a
+    rotor still learning or not); one took 2 minutes to learn a station. With 1-2 known, 17-19 % stay bad.
+* What's left over is caught by the sweep's direction (`runtime::ForeignSweeps`, `DeviceTracker::DropForeignSweeps`),
+  with no timing: a 1.0 frame's samples, each against where the pose puts the frame's station's sweep, in
+  sweeps (hits under 150 us apart); one of 3 samples or more whose residuals spread over 4 mrad about their
+  median crossed the device at another tilt, a 2.0 sweep, and is dropped before the filter. On while any
+  device has had 2.0 light in the last 10 s, so 1.0-only rooms are untouched (byte-identical replays); not
+  while the device turns faster than 4 rad/s (its pose spreads its own sweeps then: a struggling 3.0 tracker
+  lost 3 more times checked throughout).
+  Offline on the 13:02 samples: 70 % (3.0) and 51 % (2018) of those over 20 mrad off went, 0.7 % and 0.3 % of
+  those within 5 mrad. Replays against the flash fix alone: the 2018 tracker's good pose 80.6 to 84.0 % at
+  13:02 (spikes about even), 83.9 to 85.2 % at 09:47; a left Knuckles in the 11-10 shake 88.6 to 99.3 %,
+  losses 2 to 1, 2 cm jumps 39 to 6; a right Knuckles (11-09, one 1.0 and three 2.0) 68.2 to 70.7 %, jumps
+  173 to 103. The 3.0 tracker at 13:02 even (68.6 / 68.3 %).
 * Hard swings from a cold start are less reliable than in LH2 mode (above).
 * A rotor needs a visit with its station in view before its hits can be used.
 * Replays don't exercise the light-mode choice: a recording's modes are fixed.

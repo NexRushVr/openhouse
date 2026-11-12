@@ -12,9 +12,11 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 
 #include <Eigen/Geometry>
 #include <deque>
+#include <functional>
 #include <map>
 #include <set>
 #include <memory>
@@ -68,10 +70,24 @@ class DeviceTracker {
     smoothRotation_ = std::max(0.0, rotation);
   }
   // LighthouseDirect::SetMixedLightScatter, kept for every filter this tracker starts.
-  void SetMixedLightScatter(double sortedSeconds, double lh1Radians) {
-    mixedScatter_ = {sortedSeconds, lh1Radians};
-    filter_->SetMixedLightScatter(sortedSeconds, lh1Radians);
+  void SetMixedLightScatter(double sortedSeconds, double lh1Radians, double wobbleRadians = 0, double wobbleSeconds = 0) {
+    mixedScatter_ = {sortedSeconds, lh1Radians, wobbleRadians, wobbleSeconds};
+    filter_->SetMixedLightScatter(sortedSeconds, lh1Radians, wobbleRadians, wobbleSeconds);
   }
+  // Whether LH1 frames may go into keyframes (runtime::Lh1KeyframesUsable): off while their light may hold
+  // 2.0 sweeps this device can't sort.
+  void SetLh1Keyframes(bool on) { lh1Keyframes_ = on; }
+  // Whether 1.0 frames are checked for 2.0 sweeps that weren't sorted out (runtime::ForeignSweeps): on
+  // while 2.0 light is about. ForeignSweepSamples: how many samples that dropped.
+  void SetLh1SweepCheck(bool on) { lh1SweepCheck_ = on; }
+  uint64_t ForeignSweepSamples() const { return foreignSweepSamples_; }
+  // Not stock (runtime/rotor_reference.hpp): a 2.0 rotor's offset at a moment on this device's clock, as
+  // the devices in LH2 mode measure it (rad), taken off this device's sorted hits of it; false: none does.
+  using RotorOffset = std::function<bool(uint32_t base, double deviceTime, double* radians)>;
+  void SetRotorReference(RotorOffset offset) { rotorOffset_ = std::move(offset); }
+  // Frames of sorted hits so far, and of those the ones the rotor reference corrected.
+  uint64_t SortedFrames() const { return sortedFrames_; }
+  uint64_t ReferencedFrames() const { return referencedFrames_; }
   DeviceTracker(std::string id, TrackedObjectModel model, RoomMap* room);
 
   void OnBaseConfig(const BaseConfig&, const BaseDynamicState&);
@@ -106,6 +122,7 @@ class DeviceTracker {
   void TrackStillness(const ImuSample&);
   void UpdateOutput();
   void CollectKeyframe(const OpticalFrame& frame);
+  void DropForeignSweeps(OpticalFrame* frame);
   double Now() const;
   void Log(std::string text) { logs_.push_back(id_ + ": " + text); }
 
@@ -114,7 +131,7 @@ class DeviceTracker {
   RoomMap* room_;
   TrackingSource source_;
   std::unique_ptr<LighthouseDirect> filter_;
-  std::pair<double, double> mixedScatter_{0, 0};  // SetMixedLightScatter
+  std::array<double, 4> mixedScatter_{};  // SetMixedLightScatter
   std::map<uint32_t, std::pair<BaseConfig, BaseDynamicState>> bases_;
   std::optional<direct::DirectFilter> carry_;  // calibrated filter from the last track
   // The calibration as of the last calm, well-lit moment (no violent motion, light
@@ -140,6 +157,11 @@ class DeviceTracker {
   std::deque<BufferedFrame> frameBuffer_;
   std::vector<std::shared_ptr<const Keyframe>> keyframes_;
   double lastKeyframe_ = -1e300;
+  bool lh1Keyframes_ = true;  // SetLh1Keyframes
+  bool lh1SweepCheck_ = false;  // SetLh1SweepCheck
+  uint64_t foreignSweepSamples_ = 0;
+  RotorOffset rotorOffset_;  // SetRotorReference
+  uint64_t sortedFrames_ = 0, referencedFrames_ = 0;
   std::map<uint32_t, double> lastFrame_;  // last sweep time per base
   std::optional<double> preferLocatedSince_;
   uint64_t framesHandled_ = 0;

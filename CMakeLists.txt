@@ -219,7 +219,7 @@ endif()
 option(LH_BUILD_OPENVR_DRIVER "Build the drop-in driver_lighthouse.so" ON)
 find_path(OPENVR_INCLUDE_DIR openvr_driver.h PATH_SUFFIXES openvr)
 if(LH_BUILD_OPENVR_DRIVER AND LH_BUILD_USB AND OPENVR_INCLUDE_DIR)
-  add_library(driver_lighthouse MODULE src/openvr/driver_lighthouse.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/stock_hmd.cpp src/openvr/pairing_mailbox.cpp src/openvr/telemetry_server.cpp src/openvr/watchdog.cpp $<TARGET_OBJECTS:lh_runtime>)
+  add_library(driver_lighthouse MODULE src/openvr/driver_lighthouse.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/steam_rooms.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/stock_hmd.cpp src/openvr/pairing_mailbox.cpp src/openvr/telemetry_server.cpp src/openvr/watchdog.cpp $<TARGET_OBJECTS:lh_runtime>)
   if(WIN32)
     target_link_libraries(driver_lighthouse PRIVATE setupapi hid)  # stock_hmd: hiding devices from the stock DLL
     # HmdDriverFactory and our hidapi, for drivers that hook HID access (the .def says why).
@@ -320,6 +320,8 @@ if(LH_BUILD_TESTS)
     tests/unit/test_disambiguator_sob.cpp
     tests/unit/test_pulse_sorter.cpp
     tests/unit/test_mixed_light.cpp
+    tests/unit/test_rotor_wobble.cpp
+    tests/unit/test_rotor_reference.cpp
     src/runtime/mixed_light.cpp)
   target_include_directories(lh_unit_tests PRIVATE src)
   target_link_libraries(lh_unit_tests PRIVATE lh_tracking GTest::gtest_main)
@@ -338,7 +340,7 @@ if(LH_BUILD_TESTS)
   endif()
   add_test(NAME unit COMMAND lh_unit_tests)
   if(TARGET driver_lighthouse)
-    add_executable(lh_openvr_component_tests tests/openvr/test_components.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/telemetry_server.cpp)
+    add_executable(lh_openvr_component_tests tests/openvr/test_components.cpp src/openvr/hand_skeleton.cpp src/openvr/raw_alignment.cpp src/openvr/steam_rooms.cpp src/openvr/room_publisher.cpp src/openvr/host_frame.cpp src/openvr/telemetry_server.cpp)
     target_include_directories(lh_openvr_component_tests PRIVATE src tests ${OPENVR_INCLUDE_DIR})
     target_compile_definitions(lh_openvr_component_tests PRIVATE LH_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     target_link_libraries(lh_openvr_component_tests PRIVATE lh lh_tracking Eigen3::Eigen nlohmann_json::nlohmann_json GTest::gtest_main)

@@ -195,6 +195,14 @@ struct MixedLightOptions {
   // The headset, in LH2 mode, times each 2.0 station for the others, so they visit LH2 mode half as
   // often while it covers every station they use.
   bool scout = true;
+  // On (a test): a device stays in LH2 mode while the 2.0 stations light it well, and reads the 1.0
+  // stations (LH1 mode) only while they don't. In LH2 mode a hit carries its own angle, and a tracker
+  // lying still swayed a third as much (runtime/mixed_light.hpp, Lh2LightEnough).
+  bool preferLh2 = false;
+  // The devices in LH2 mode (the headset, mostly) measure each 2.0 rotor's timing wobble from its beam
+  // words, and the devices in LH1 mode take it off their sorted hits of that rotor
+  // (runtime/rotor_reference.hpp). It's the station's own, the same for every device that sees it.
+  bool rotorReference = true;
   bool operator==(const MixedLightOptions&) const = default;
 };
 
@@ -235,6 +243,8 @@ struct SessionOptions {
   // 1.0 and 2.0 base stations together, from the start (SetMixedLight changes it). In a replay
   // it sorts the recorded LH1 pulses; the light modes are the recording's.
   MixedLightOptions mixedLight;
+  // Replay: capture times (s, as replayFrom) at which that switch flips, as it did live.
+  std::vector<double> replayMixedSwitch;
 };
 
 class Session {

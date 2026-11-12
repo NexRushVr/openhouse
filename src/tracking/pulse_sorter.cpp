@@ -27,6 +27,11 @@ constexpr double kMinHalfWidth = 100e-6;
 constexpr double kMaxShift = 400e-6;
 constexpr double kFlashGroup = 1e-3;    // sync pulses this close are one flash
 constexpr double kFlashLife = 0.02;     // no flash for this long: no 1.0 station in view
+// 1.0 stations flash every half revolution, a pair within kFlashGroup. A 2.0 hit can be as long as a
+// flash (more often on some trackers, close to a station: 0.4 % of one 2018 tracker's hits ran past
+// 56 us), and taken for one it started the 1.0 timing afresh, mid-sweep. So a sync-width pulse this far
+// off the flash schedule isn't a flash (SetFlashSchedule: lhbs multi-station keeps another).
+constexpr double kFlashSlot = 1.0 / 120, kFlashSlotTolerance = 0.5e-3;
 constexpr double kLh1Period = 1.0 / 60; // a 1.0 rotor's revolution
 constexpr double kLh1SweepFrom = 1e-3, kLh1SweepTo = 7.4e-3;  // after a flash
 constexpr double kReacquireEvery = 0.05;
@@ -245,6 +250,14 @@ bool PulseSorter::InSweep(double t) const {
 
 PulseSorter::Result PulseSorter::Sort(double start, double width, int sensor, int* channel, double* hitTime) {
   if (width >= kSyncMin && width <= kSyncMax) {
+    // The next flash after the last (not one of its pair, nor one a little out of order), 1.0 light
+    // still about: on the schedule, or a long 2.0 hit, dropped rather than taken for either.
+    const double since = start - lastFlash_;
+    if (flashSchedule_ && lastFlash_ >= 0 && since > kFlashGroup && since <= kFlashLife &&
+        std::fabs(since - kFlashSlot * std::round(since / kFlashSlot)) >= kFlashSlotTolerance) {
+      ++counters_.offSchedule;
+      return Result::Dropped;
+    }
     ++counters_.syncWidth;
     if (start - lastFlash_ > kFlashGroup) {
       lastFlash_ = start;

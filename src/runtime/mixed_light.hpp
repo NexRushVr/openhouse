@@ -19,6 +19,8 @@
 // Live only: a replay's modes are in its recording.
 #pragma once
 
+#include <vector>
+
 #include "lh/session.hpp"
 
 namespace lh::runtime {
@@ -34,9 +36,42 @@ constexpr double kVisitEvery = 45, kScoutedVisitEvery = 90;
 // LH2 mode's jitter; these brought it near LH2 mode's, with no lag.
 constexpr double kSortedHitScatter = 1e-6;    // s, of a sorted 2.0 hit's timing
 constexpr double kLh1HitScatter = 0.5e-3;     // rad, of a 1.0 station's angle
+// A 2.0 rotor's sorted hits are off all alike, wandering over a few tenths of a second
+// (tracking/rotor_wobble.hpp): the rotor's real beam words sit 0.25-0.3 us rms (0.09 mrad) off its line,
+// and on a tracker lying still a frame's hits were off together by 0.09-0.17 mrad. Followed per rotor and
+// taken out, as far as the pose is known better: this far it may be off, and this long it lasts.
+constexpr double kRotorWobble = 0.3e-3;       // rad
+constexpr double kRotorWobbleMemory = 0.2;    // s
+
+// MixedLightOptions::preferLh2 (a test): LH2 mode while the 2.0 light is enough, LH1 mode only while it
+// isn't. In LH1 mode a sorted hit's angle hangs on its rotor keeping to a line, which it doesn't
+// (tracking/rotor_wobble.hpp), and trackers lying still swayed 0.22-0.41 mm rms against 0.07-0.12 mm in LH2
+// mode, 0.12-0.36 mm with the wobble followed (live 2026-11-11: 0.17 and 0.08 mm in LH2 mode against 0.50
+// and 0.12 mm in LH1 mode). Enough (Lh2LightEnough): kPreferHits sensor hits in the last 0.5 s from the 2.0
+// stations together, counting each seen in kPreferFrames frames (of about 50) with kPreferSensors sensors a
+// frame. It was one station lighting 4 sensors a frame in 20 frames, a pose by itself; but LH2 mode tracks
+// on the stations together, and Knuckles lit 3-4 sensors a frame by each of two fell short of that for up to
+// 17 % of their time there: live they left after 2.6-11 s while tracking 93-97 % of it, and waited 20 s to
+// come back. Going to LH1 mode costs 10-20 ms, so it's left as soon as the light has been short for
+// kPreferShort; coming back costs 0.5-1.5 s without new light (live), so that waits for kPreferCovered of
+// enough light without a break, a calm moment, and kPreferMinLh1 in LH1 mode: at worst one such gap every
+// 20 s, where the light comes and goes.
+constexpr int kPreferFrames = 10;
+constexpr double kPreferSensors = 3, kPreferHits = 80;
+constexpr double kPreferShort = 0.25;    // s
+constexpr double kPreferCovered = 10.0;  // s
+constexpr double kPreferMinLh1 = 20.0;   // s
 
 // Whether a device of this kind reads both kinds of base station.
 bool MixesLight(DeviceRole role, const MixedLightOptions& options);
+
+// One 2.0 station's light on a device in the last 0.5 s: frames, and the mean sensors lit per frame.
+struct Lh2Light {
+  int frames = 0;
+  double sensors = 0;
+};
+// MixedLightOptions::preferLh2: whether the 2.0 stations light the device well enough to stay in LH2 mode.
+bool Lh2LightEnough(const std::vector<Lh2Light>& stations);
 
 struct MixedLightView {
   int mode = -1;           // 0 = LH1, 1 = LH2, -1 = not sent yet
@@ -59,6 +94,10 @@ struct MixedLightView {
   // gives no pose until a device on the 1.0 light places one from its sorted hits. So every device, the
   // headset too, visits LH2 mode only to learn the rotors, and stays on the 1.0 light even when lost there.
   bool lh2Unplaced = false;
+  // MixedLightOptions::preferLh2. lh2Covered: s a 2.0 station has lit the device well without a break (0:
+  // none does now); lh2Short: s since one last did (0: one does now).
+  bool preferLh2 = false;
+  double lh2Covered = 0, lh2Short = 0;
 };
 
 struct MixedLightStep {
@@ -88,6 +127,71 @@ enum class MixedRoomStep { NotInUse, InUse, RoomDark };
 constexpr double kLh2RoomDark = 90;
 // RoomDark: not in use for that room from now on (until the switch is turned on again).
 MixedRoomStep ChooseMixedRoom(const MixedRoomView& view);
+
+// The light mode while 1.0 + 2.0 isn't in use (switched off, or a room without a 2.0 station). As stock:
+// from the room's stations, and in a room with both kinds, a device without usable light (a 1.0 sync flash
+// or a beam word) for 2.5 s tries the other mode. Not stock: a device that has sent 2.0 light stays in LH2
+// mode while any device sees 2.0 light. In LH1 mode the 2.0 stations' sweeps reach it unsorted beside the
+// 1.0 stations' light and keep breaking its pose, and the 1.0 light then holds it there. In a recording, a
+// tracker dark for 2.5 s just after the switch went off had a good pose for 38 % of the next two minutes in
+// LH1 mode, against 95 % for the one beside it, still in LH2 mode. A device out of the 2.0 stations' view
+// waits in the dark instead.
+struct LightModeView {
+  int mode = -1;                 // 0 = LH1, 1 = LH2, -1 = not sent yet
+  double inMode = 0;             // s since this mode was chosen
+  double dark = 0;               // s without usable light
+  bool knownLh1 = false;         // the room has a 1.0 station (SteamVR's database)
+  bool knownLh2 = false;         // ... a 2.0 station
+  bool seenLh1 = false;          // a 1.0 station seen this session
+  bool seenLh2 = false;          // ... a 2.0 station
+  bool everLh2 = false;          // this device has sent a beam word this session
+  double sinceLh2Light = 1e300;  // s since any device last had 2.0 light
+};
+// s since any device's last beam word that still counts as 2.0 stations lit. Past it (they've been turned
+// off), stock's choice applies again.
+constexpr double kLh2Lit = 10;
+MixedLightStep ChooseLightMode(const LightModeView& view);
+
+// Whether a device's LH1 frames may go into keyframes for the room map (DeviceTracker::SetLh1Keyframes). An
+// LH1 frame takes every pulse in its station's sweep window, so a 2.0 station's sweep that the device doesn't
+// sort lands in it as wrong angles. The filter checks each sample against its pose and drops those; the room
+// solver takes keyframes as they are. In a recording, unsorted stretches gave 40-55 % of the trackers' 1.0
+// samples 10 mrad to 0.8 rad off, and the solver, fitting them, loosened and relearned the 1.0 stations.
+// So while 2.0 light is about, LH1 frames go into keyframes only from a device that sorts, knowing every 2.0
+// station seen this session. Off: switched off, a 1.0-only device, or rotors not learned yet (a replay
+// starting mid-session, a station not yet visited). With no 2.0 light (a 1.0-only room), always on.
+struct Lh1KeyframeView {
+  double sinceLh2Light = 1e300;  // s since any device last had 2.0 light
+  int lh2Stations = 0;           // 2.0 stations seen this session
+  bool sorting = false;          // the device sorts its LH1 pulses
+  int knownRotors = 0;           // rotors it can predict, with a real beam word within kRotorFresh
+};
+// s since a rotor's last real beam word that it still counts as known: two visits' worth with the scout
+// (kScoutedVisitEvery). Its line is learned once and kept, but runs off while no words come.
+constexpr double kRotorFresh = 2 * kScoutedVisitEvery;
+bool Lh1KeyframesUsable(const Lh1KeyframeView& view);
+
+// A 1.0 frame takes every pulse in its sweep window, so a 2.0 sweep that wasn't sorted out lands in it as
+// 1.0 samples (a rotor not learned yet, a 1.0-only device, the switch off). Against where the pose puts the
+// frame's own station's sweep, one sweep's samples (hits less than kSweepGap apart) are off alike: by the
+// pose's error, or the timing's. A 2.0 sweep crosses the device at another tilt and speed, so its sensors
+// are off by different amounts. So a sweep of at least kSweepMinSamples samples spreading more than
+// kSweepSpread about their median is dropped, before the filter or the room map sees it. In a recording
+// (2026-11-11 13:02, two 1.0 and three 2.0 stations): of the samples over 20 mrad off, 70 % of a 3.0
+// tracker's and 51 % of a 2018 tracker's went, of those within 5 mrad 0.7 % and 0.3 %. No timing needed,
+// only a pose, and one that holds: turning fast, its error spreads a sweep's own samples too, and checked
+// then a struggling tracker lost more light and tracking (3 more losses in that recording); above
+// kSweepMaxTurn the check waits.
+constexpr double kSweepGap = 150e-6, kSweepSpread = 4e-3;  // s, rad
+constexpr int kSweepMinSamples = 3;
+constexpr double kSweepMaxTurn = 4.0;  // rad/s
+struct SweepSample {
+  double time = 0;      // the pulse's start
+  double residual = 0;  // rad, its angle less the pose's for the frame's station and axis
+  bool judged = false;  // the pose has one
+};
+// In time order; true for each sample to drop.
+std::vector<bool> ForeignSweeps(const std::vector<SweepSample>& samples);
 
 // The scout. Between a device's visits to LH2 mode its line for a 2.0 rotor runs off, about half of it
 // because the rotor's speed changes (stations warm for minutes after waking: 1-2.5 ppm over 10-15 min,
