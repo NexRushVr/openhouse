@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <limits>
 
 namespace lh::runtime {
 namespace {
@@ -229,14 +230,22 @@ void DeviceTracker::HandleFrame(const OpticalFrame& original) {
   }
   const int rejectsBefore = filter_->Filter().rejectCount;
   const double lastOpticalBefore = filter_->LastOpticalTime();
+  const double filterBefore = filter_->Time();
   filter_->OnFrame(frame);
   if (frame.baseSerial && wasTracking) {
     std::set<int> lit;
     for (const auto& s : frame.samples) if (s.sensor >= 0) lit.insert(s.sensor);
     if (lit.size() >= 4) {
       int& streak = rejectStreak_[{frame.baseSerial, frame.axis & 1}];
-      if (filter_->LastOpticalTime() == lastOpticalBefore) ++refusedLit_;
-      else refusedLit_ = 0;
+      // Light from before the time the IMU has carried the filter to is skipped unread, not
+      // refused: it says nothing about the pose. Switching LH1 -> LH2 mode, the last sorted frames
+      // came 0.17-0.31 s late, behind the filter, and the LH2 light only 0.5-1.5 s after the
+      // switch; counted, they restarted tracking 0.45 s in (live 2026-11-11: 12 of 45 switches,
+      // the device lost for 0.1-1.2 s). Now it coasts until the LH2 light comes.
+      double earliest = std::numeric_limits<double>::infinity();
+      for (const auto& s : frame.samples) earliest = std::min(earliest, s.time + 0.5 * s.width);
+      if (filter_->LastOpticalTime() != lastOpticalBefore) refusedLit_ = 0;
+      else if (earliest >= filterBefore) ++refusedLit_;
       if (filter_->Filter().rejectCount != rejectsBefore) {
         ++streak;
         // Say why the light is being refused, once per streak. Without this a log can

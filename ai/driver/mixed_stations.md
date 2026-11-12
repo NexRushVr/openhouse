@@ -148,6 +148,14 @@ such light for 76-89 % of their time in LH1 mode, in one where they were carried
 looks enough: a device whose one 2.0 station is covered goes about 0.5 s on the IMU before the 1.0 light is
 there, where in LH1 mode it would have had it throughout.
 
+**Losses on going to LH2 mode** (live 2026-11-11, preferLh2 test): 6 of 29 visits and 6 of 16 switches
+for enough 2.0 light lost the device for 0.1-1.2 s, "light keeps arriving but none fits the pose: reacquiring"
+0.45 s after the switch. The last sorted frames reached the filter 0.17-0.31 s after their sweep (LH2 words
+take 70 ms, p99 95 ms), behind the time the IMU had carried it to (`inertialLag_`, 0.12 s), and were skipped
+unread; the LH2 light itself came 0.5-1.5 s after the switch. Counted as refused light they tripped
+`kRefusedLightReset` first. They aren't counted now: in the replay of the one such loss the 3.0 tracker
+coasted 1.3 s instead, within 8 mm, and was 0.8 mm from where it had been once the light came.
+
 **lhbs multi-station** auto-detection waits while sorting (`TrackingSource::UseMulti`), as it was off
 (`LH_MULTISTATION=off`) for every test here. The room's lone stock 1.0 station (channel A, no cable) tripped
 it even with the 2.0 stations off: "multi-station layout detected (0 multi / 0 stock flash pairs)", through
