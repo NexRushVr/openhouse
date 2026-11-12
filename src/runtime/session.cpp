@@ -1608,7 +1608,7 @@ void SessionImpl::LoadSettings() {
     if (j.contains("mixedLight")) {
       // 1.0 and 2.0 base stations together: true/false, or
       // {"enabled": true, "controllers": true, "trackers": true, "scout": true, "preferLh2": false,
-      // "rotorReference": false}. Under SteamVR the
+      // "rotorReference": true}. Under SteamVR the
       // driver's settings page wins once it has values (this seeds them); Monado and WiVRn use this.
       const auto& m = j.at("mixedLight");
       MixedLightOptions o;
@@ -1625,7 +1625,7 @@ void SessionImpl::LoadSettings() {
         o.trackers = get("trackers", true);
         o.scout = get("scout", true);
         o.preferLh2 = get("preferLh2", false);
-        o.rotorReference = get("rotorReference", false);
+        o.rotorReference = get("rotorReference", true);
       } else {
         throw std::runtime_error("mixedLight must be true, false or an object");
       }

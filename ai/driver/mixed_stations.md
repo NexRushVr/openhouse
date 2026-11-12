@@ -196,9 +196,9 @@ pose is refused after 1 s and none is shown until the 2.0 light is back. Which i
 known (it was moving at 0.5-1 m/s). Lying still: the 2018 tracker's losses 2 to 1, the 3.0 tracker's 3 to 2
 and good pose 99.7 to 99.9 %, its still jitter 0.17 to 0.20 mm (not looked into).
 
-**The rotor's wobble, measured in LH2 mode** (`MixedLightOptions::rotorReference`, "the headset measures the 2.0
-stations' timing wobble for the other devices", a test, off; `runtime/rotor_reference.hpp`; replay
-`--mixed-rotor-reference`). Measured in replays of four recordings of 2026-11-11 (debug dumps of every beam word
+**The rotor's wobble, measured in LH2 mode** (`MixedLightOptions::rotorReference`, "Headset measures the 2.0
+stations' timing wobble for the other devices", on by default, under "Headset times the 2.0 stations";
+`runtime/rotor_reference.hpp`; replay `--mixed-no-rotor-reference` to leave it out). Measured in replays of four recordings of 2026-11-11 (debug dumps of every beam word
 and every frame's raw angles, not kept):
 
 - The wobble is the station's own. Two devices in LH2 mode on one rotor at once saw the same (r 1.00, 0.005 mrad
@@ -243,7 +243,11 @@ largest step at a change of light mode 15 to 53 mm. The 2018 tracker's 14:41 cou
 - No correction in a device's first 800 updates: the 2018 tracker 0.35 mm at 14:41 and lost twice.
 
 Logged every 6000 frames of sorted hits per device: "rotor reference: N % of M frames of sorted hits corrected
-so far" (72-100 % in these replays). Not tried live.
+so far" (72-100 % in these replays). Live 2026-11-11 21:12-21:15, on for the first 73 s: the 3.0 tracker "near 2.0
+only" by eye; replayed, its still jitter in LH1 mode 0.12 mm off, 0.06 on (0.05-0.06 in LH2 mode), the 2018 tracker
+0.20 to 0.15, Knuckles 0.13 and 0.19 to 0.11 and 0.15, with the same losses and restarts and 88-89 % of frames
+corrected. On by default since. The driver writes it into SteamVR's settings once (marker
+`mixedLightRotorReferenceDefaultWritten`): a key SteamVR has no default for can read off with no error.
 
 **LH2 mode while the 2.0 light is enough** (`MixedLightOptions::preferLh2`, "use the 1.0 stations only while
 the 2.0 stations don't light a device well", a test, off; `runtime::ChooseMixedLight`). A replay
