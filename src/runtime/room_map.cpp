@@ -517,6 +517,7 @@ void RoomMap::Observe(const std::string& device, uint32_t primary, uint32_t alt,
       target->positionVariance = std::max(target->positionVariance, 0.02);
       target->rotationVariance = std::max(target->rotationVariance, 0.0523599 * 0.0523599);
       target->inconsistent = 0;
+      target->farSolves = 0;
       // Still the solver's (#42): with solved cleared, the next observation from this same
       // device blended the base half way to its view.
       relearned_.push_back(target->serial);
@@ -615,6 +616,7 @@ void RoomMap::Bump(uint32_t serial, const std::string& why) {
     b.rotationVariance = std::max(b.rotationVariance, 3 * 0.03 * 0.03);
     b.observations = 0;
     b.inconsistent = 0;
+    b.farSolves = 0;
     solvedTarget_.erase(serial);
     char text[200];
     std::snprintf(text, sizeof text, "Base %08X knocked (%s): relearning its pose", serial, why.c_str());
@@ -695,7 +697,7 @@ void RoomMap::ApplySolved(uint32_t serial, const Eigen::Isometry3d& pose, double
     b.rotationVariance = std::max(rv, 1e-9);
     b.observations = keyframes;
     b.solved = true;
-    b.inconsistent = 0;
+    b.farSolves = 0;
     Changed();
     return;
   }
@@ -723,7 +725,7 @@ void RoomMap::ApplySolved(uint32_t serial, const Eigen::Isometry3d& pose, double
     b.rotationVariance = std::max(rv, 1e-9);
     b.observations = keyframes;
     b.storedObservations = 0;  // earlier sessions' evidence is for the old place: lock again on new solves only
-    b.inconsistent = 0;
+    b.farSolves = 0;
     b.relearn = false;
     ++b.epoch;
     Changed();
@@ -732,7 +734,7 @@ void RoomMap::ApplySolved(uint32_t serial, const Eigen::Isometry3d& pose, double
   // Moved? Far outside what both the room and this solve allow, in place or in turn
   // (a knocked base mostly turns on its mount: 1 deg is 9 cm at 5 m).
   if (FarOff(serial, pose, pv, rv)) {
-    if (++b.inconsistent < 3) return;
+    if (++b.farSolves < 3) return;
     // A knock (20 cm, 3 deg) is taken at once: light against the old place is wrong.
     // Less (an imported room's error, a slow drift) glides there, as every other solve:
     // a step moves every device on this base at once (live: a 10 cm head shift).
@@ -751,13 +753,13 @@ void RoomMap::ApplySolved(uint32_t serial, const Eigen::Isometry3d& pose, double
     b.rotationVariance = std::max(rv, 1e-9);
     b.observations = keyframes;
     b.storedObservations = 0;  // earlier sessions' evidence is for the old place (#42), as after a bump
-    b.inconsistent = 0;
+    b.farSolves = 0;
     ++b.epoch;
     relearned_.push_back(serial);  // keyframes from before the move are stale
     Changed();
     return;
   }
-  b.inconsistent = 0;
+  b.farSolves = 0;
   if (fresh <= 0) return;
   // Information-weighted: the fresh share of this window is new evidence, worth
   // fresh / keyframes of the window's information; the room's own is its variance's.
