@@ -133,7 +133,7 @@ In SteamVR's settings there is an **openhouse** page (Settings > openhouse, you 
 - **Position smoothing** and **Rotation smoothing** are how long a tracking correction takes to show up, 60 ms by default. Lower means less delay, but small corrections can show up as tiny jumps. 0 turns it off.
 - **Record Session (disable to save)** records your devices' raw data while it's on. When you turn it off, it saves a bug report zip with that recording (see below). The recordings themselves stay in `~/.local/share/openhouse/recordings` on Linux and `%LOCALAPPDATA%\openhouse\recordings` on Windows.
 - **Reset room** throws away the learned room and learns it again from scratch. Use it if you moved your basestations around and the room doesn't fix itself. It turns itself back off.
-- **Enable Mixed Basestations** and the three **Mixed Basestations** toggles below it, see [Mixed basestations](#mixed-basestations-experimental). Off by default.
+- **Enable Mixed Basestations** and the toggles that show up under it while it's on, see [Mixed basestations](#mixed-basestations-experimental). Off by default.
 
 Changes apply while you play, within a second.
 
