@@ -4,6 +4,11 @@
 #include <gtest/gtest.h>
 #include "openvr/hand_skeleton.hpp"
 #include "openvr/raw_alignment.hpp"
+#include "openvr/steam_rooms.hpp"
+#include "runtime/room_map.hpp"
+#include <fstream>
+#include <set>
+#include <sstream>
 #include "openvr/room_publisher.hpp"
 #include "openvr/host_frame.hpp"
 #include "openvr/haptic_routing.hpp"
@@ -493,4 +498,66 @@ TEST(LogLevels, ClassifiesAndParses) {
   EXPECT_EQ(l, lh::LogLevel::Warn);
   EXPECT_FALSE(lh::ParseLogLevel("loud", &l));
   EXPECT_STREQ(lh::LogLevelName(lh::LogLevel::Error), "ERR");
+}
+
+// SteamVR's rooms (#82): our room written into lighthousedb.json as a universe of its own,
+// beside SteamVR's (kept as they were), placed where the host frame has its bases; never
+// taken back as one of SteamVR's (import or alignment).
+TEST(SteamRooms, WritesOurUniverseAndLeavesSteamVRsAlone) {
+  const auto dir = std::filesystem::temp_directory_path() / ("lh-test-steamrooms-" + std::to_string(lh::platform::ProcessId()));
+  std::filesystem::create_directories(dir);
+  const std::string path = (dir / "lighthousedb.json").string();
+  const std::string steamUniverse = R"({"id": "77", "tilt": {"pitch": 0.0, "roll": 0.0},
+             "base_stations": [{"base_serial_number": 1,
+               "target_pose": {"pose": [0, 0, 0, 1, 0, 0, 0], "target_serial_number": 0, "variance": 0}}]})";
+  {
+    std::ofstream f(path);
+    f << R"({"revision": 4, "known_objects": [], "known_universes": [)" << steamUniverse << R"(],
+           "base_stations": [{"config": {"serialNumber": 2, "baseCalibration": [0,0,0,0,0,0,0,0,0,0,0,0,0,0]},
+             "dynamic_states": [{"dynamic_state": {"reset_count": 1}}]}]})";
+  }
+  lh::openvr::UniverseBase base;
+  base.serial = 2;
+  base.rawFromBase = Eigen::Translation3d(1, 2, 3) * Eigen::AngleAxisd(0.5, Eigen::Vector3d::UnitY());
+  base.variance = 1e-6;
+  std::string error;
+  ASSERT_TRUE(lh::openvr::WriteUniverse(path, "1794426234", {base}, &error)) << error;
+  base.rawFromBase = Eigen::Translation3d(1, 2, 4) * Eigen::AngleAxisd(0.5, Eigen::Vector3d::UnitY());
+  ASSERT_TRUE(lh::openvr::WriteUniverse(path, "1794426234", {base}, &error)) << error;  // rewritten, not added
+  EXPECT_FALSE(lh::openvr::WriteUniverse(path, "77", {base}, &error)) << "SteamVR's own universe is never rewritten";
+  EXPECT_TRUE(std::filesystem::exists(path + ".openhouse-backup"));
+
+  std::ifstream in(path);
+  const auto j = nlohmann::json::parse(in);
+  ASSERT_EQ(j.at("known_universes").size(), 2u);
+  EXPECT_EQ(j.at("known_universes")[0], nlohmann::json::parse(steamUniverse));
+  EXPECT_EQ(j.at("revision"), 6);
+  // Read back the way the stock driver's format is read: the base where we had it.
+  lh::runtime::RoomMap all;
+  nlohmann::json ours = j;
+  ours["known_universes"][1].erase("openhouse");
+  ASSERT_TRUE(all.ImportSteamDatabase(ours.dump(), &error)) << error;
+  lh::BaseConfig config; config.valid = true; config.serial = 2; config.cal.assign(14, 0.0);
+  all.OnBaseSeen(config, {});
+  ASSERT_NE(all.Base(2), nullptr);
+  EXPECT_TRUE(all.Base(2)->worldFromBase.isApprox(base.rawFromBase, 1e-9));
+  // Ours is neither imported nor aligned to.
+  lh::runtime::RoomMap imported;
+  std::ostringstream text; text << std::ifstream(path).rdbuf();
+  ASSERT_TRUE(imported.ImportSteamDatabase(text.str(), &error)) << error;
+  imported.OnBaseSeen(config, {});
+  EXPECT_EQ(imported.Base(2), nullptr);
+  const auto foreign = nlohmann::json::parse(lh::openvr::ForeignUniverses(text.str(), {"77", "1794426234"}));
+  ASSERT_EQ(foreign.at("known_universes").size(), 1u);
+  EXPECT_EQ(foreign.at("known_universes")[0].at("id"), "77");
+  EXPECT_TRUE(nlohmann::json::parse(lh::openvr::ForeignUniverses(text.str(), {})).at("known_universes").empty());
+  std::filesystem::remove_all(dir);
+}
+
+TEST(SteamRooms, ReadsChaperoneUniverses) {
+  const auto path = (std::filesystem::temp_directory_path() / ("lh-test-vrchap-" + std::to_string(lh::platform::ProcessId()) + ".vrchap")).string();
+  { std::ofstream f(path); f << R"({"universes": [{"universeID": "1770781428"}, {"universeID": 42}], "version": 5})"; }
+  EXPECT_EQ(lh::openvr::ChaperoneUniverses(path), (std::set<std::string>{"1770781428", "42"}));
+  std::filesystem::remove(path);
+  EXPECT_TRUE(lh::openvr::ChaperoneUniverses(path).empty());
 }
