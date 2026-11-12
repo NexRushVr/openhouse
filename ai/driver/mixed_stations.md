@@ -177,6 +177,25 @@ mrad for seconds). It settled none of the 2018 tracker's moments (the third reco
 0.5 mrad but 5.8 at 0.49, where the still recording also fell to 99.2 %) and gave back a third of the
 others' steadiness (0.17, 0.13, 0.12 mm to 0.19, 0.17, 0.15).
 
+**More stations than slots** (`lh::SlotToGiveUp`, `LighthouseDirect::AddKnownAltBase`). The filter holds four
+stations, the primary and three others, and a device on both kinds of light can see more: two 1.0 and three
+2.0 here. Whichever lit it first took the last slot and kept it while tracking held, lit or not, and which of
+two 1.0 stations came first hung on a pulse. In one replay the 2018 tracker's last slot went to the 1.0
+station that then gave it 1-3 frames a second, none used, and the other's 60 frames a second (2-3 sensors) had
+no slot: on one plane of one rotor besides, lying still, it slid 1.8 m in 9 s with every frame taken, then
+was lost for 7 s. Now, with every slot taken, a station lighting three sensors
+or more takes the place of the one whose light was last used longest ago (a frame of three hits or more), if
+that is over 2 s ago, entering from the room map as any station does; the one put out comes back the same way
+(logged: "in place of ..., which gave no light"; 2-9 times a recording, all devices together). The 2018
+tracker carried about, good pose without and with this: 88.2 to 91.1 % with the follower as it was, 87.8 to
+91.1 % with it as it is and 1.0 hits at 0.49 mrad, where the slot went wrong; where it happened to go right,
+94.3 to 91.2 % (and 94.4 to 91.1 % without the follower). With it, 91.1-91.2 % in all eight builds tried.
+Those 3 points are one stretch of 9 s after a hard swing: without this the tracker shows a pose there,
+from a reacquire on a 1.0 station, that ends 1.2 m from where the 2.0 light puts it 1.5 s later; with it, that
+pose is refused after 1 s and none is shown until the 2.0 light is back. Which is nearer the truth isn't
+known (it was moving at 0.5-1 m/s). Lying still: the 2018 tracker's losses 2 to 1, the 3.0 tracker's 3 to 2
+and good pose 99.7 to 99.9 %, its still jitter 0.17 to 0.20 mm (not looked into).
+
 **LH2 mode while the 2.0 light is enough** (`MixedLightOptions::preferLh2`, "use the 1.0 stations only while
 the 2.0 stations don't light a device well", a test, off; `runtime::ChooseMixedLight`). A replay
 can't show it (its modes are the recording's): unit tests only. LH2 mode has no wobble, so the surest way

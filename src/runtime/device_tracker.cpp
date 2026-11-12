@@ -219,11 +219,18 @@ void DeviceTracker::HandleFrame(const OpticalFrame& original) {
       // The room pose is a starting point, not a constraint: the filter keeps refining
       // the relative pose with its own measurements. Locking it to the room (tiny
       // variance) measurably increases pose jitter (see ai/driver/lh_runtime.md).
+      // With every slot taken, a base lighting three sensors or more takes a dark one's place (SlotToGiveUp).
+      uint32_t replaced = 0;
       if (filter_->AddKnownAltBase(frame.baseSerial, altFromPrimary,
                                    std::max(alt->positionVariance + primary->positionVariance, kAltPriorVariance),
-                                   std::max(alt->rotationVariance + primary->rotationVariance, kAltPriorVariance))) {
-        char text[96];
-        std::snprintf(text, sizeof text, "added base %08X from the room map", frame.baseSerial);
+                                   std::max(alt->rotationVariance + primary->rotationVariance, kAltPriorVariance),
+                                   frame.samples.size() >= 3, &replaced)) {
+        char text[128];
+        if (replaced)
+          std::snprintf(text, sizeof text, "added base %08X from the room map in place of %08X, which gave no light",
+                        frame.baseSerial, replaced);
+        else
+          std::snprintf(text, sizeof text, "added base %08X from the room map", frame.baseSerial);
         Log(text);
       }
     }

@@ -327,6 +327,7 @@ bool LighthouseDirect::Bootstrap(const OpticalFrame& frame, const BaseConfig& ba
     filter_.altBaseRelearn[slot - 1] = false;
     filter_.n = std::max(filter_.n, idx + 6);
     slots_[slot] = base.serial; ++secondaryBases_;
+    slotUsed_[slot] = time;
     return false;  // Added a base, but did not perform a measurement update.
   }
   for (int i = 0; i < 3; ++i) filter_.x[i] = solved.pose.p[size_t(i)];
@@ -502,6 +503,7 @@ bool LighthouseDirect::ApplyOpticalResiduals(const OpticalFrame& frame, const Ba
   const bool ok = filter_.Update(residuals, R, Eigen::Map<Vec>(z.data(), m), true);
   filter_.frameGateOff = false;
   if (!ok) return false;
+  if (hits >= 3) slotUsed_[slot] = time;
   time_ = time;
   const uint64_t before = filter_.updateCount;
   if (hits >= 4) {
@@ -740,11 +742,17 @@ bool LighthouseDirect::SeedPose(const Seed& seed) {
 }
 
 bool LighthouseDirect::AddKnownAltBase(uint32_t serial, const Eigen::Isometry3d& altFromPrimary,
-                                       double translationVariance, double rotationVariance) {
+                                       double translationVariance, double rotationVariance, bool lit,
+                                       uint32_t* replaced) {
   if (!slots_[0] || Slot(serial) >= 0 || !bases_.count(serial)) return false;
   int slot = 1;
   while (slot < 4 && slots_[slot]) ++slot;
-  if (slot == 4) return false;
+  if (slot == 4) {
+    slot = lit ? SlotToGiveUp(slotUsed_, time_) : 0;
+    if (slot == 0) return false;
+    if (replaced) *replaced = slots_[slot];
+    --secondaryBases_;
+  }
   const Eigen::AngleAxisd aa(altFromPrimary.rotation());
   const Eigen::Vector3d rotation = aa.axis() * aa.angle();
   const int idx = kAltBaseIndex[slot - 1];
@@ -759,6 +767,7 @@ bool LighthouseDirect::AddKnownAltBase(uint32_t serial, const Eigen::Isometry3d&
   filter_.altBaseRelearn[slot - 1] = false;
   filter_.n = std::max(filter_.n, idx + 6);
   slots_[slot] = serial; ++secondaryBases_;
+  slotUsed_[slot] = time_;
   return true;
 }
 
