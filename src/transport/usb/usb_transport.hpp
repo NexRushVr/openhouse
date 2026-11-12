@@ -108,6 +108,11 @@ class UsbTransport {
   // ("" if none). Any thread.
   struct Receiver { std::string serial, connected; uint16_t pid = 0; };
   std::vector<Receiver> Receivers() const;
+  // The device a receiver was carrying has gone (wireless dropout, powered off). Until this
+  // existed, `receivers_[dongle].connected` kept the old serial: SteamVR kept showing the
+  // dongle as occupied, its pairing page insisted a controller was still connected, and the
+  // only way to pair another was to unplug the receiver.
+  void OnDeviceGone(const DeviceId& serial);
   // Puts a receiver into pairing mode for `milliseconds` (0: leaves pairing mode), as
   // stock 0x3ce9e0 / 0x3cea40: feature 0xff "ad 03 <on> <ms u16>". A receiver that has a
   // device is reopened afterwards (its device is replaced). Any thread; false if no such
