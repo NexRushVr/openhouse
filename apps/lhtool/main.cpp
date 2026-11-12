@@ -2,6 +2,7 @@
 //
 //   lhtool capture OUT.lhraw [SECONDS]   record raw HID reports from all devices
 //   lhtool stats [IN.lhraw | live SECONDS]  decode and print per-device statistics
+//   lhtool inputs [IN.lhraw | live SECONDS] print each device's controller input as it changes
 #include <chrono>
 #include <csignal>
 #include <cmath>
@@ -26,6 +27,54 @@ namespace {
 
 volatile std::sig_atomic_t interrupted = 0;
 void Stop(int) { interrupted = 1; }
+
+// Controller input as the transport frames it, each change per device: for checking a
+// controller's layout (raw records of mapped-input firmware such as Shiftall FlipVR).
+struct InputsSink : lh::InputSinkBase {
+  struct Last {
+    int format = -1;
+    std::string text;
+  };
+  std::mutex mutex;
+  std::map<std::string, Last> last;
+  std::map<std::string, long> counts;
+  void OnDeviceAttached(const lh::DeviceId&, const std::string&) override {}
+  void OnDeviceDetached(const lh::DeviceId&) override {}
+  void OnClockOffset(const lh::DeviceId&, double) override {}
+  void OnImu(const lh::DeviceId&, const lh::ImuSample&) override {}
+  void OnLightPulse(const lh::DeviceId&, const lh::LightPulse&) override {}
+  void OnLh2BeamWord(const lh::DeviceId&, const lh::Lh2BeamWord&) override {}
+  void OnLh2SensorWord(const lh::DeviceId&, const lh::Lh2SensorWord&) override {}
+  void OnDemodCount(const lh::DeviceId&, lh::DeviceTime, int) override {}
+  void OnEvent(const lh::DeviceId&, const lh::DeviceEvent&) override {}
+  void OnAux(const lh::DeviceId&, const lh::AuxEvent&) override {}
+  void OnInput(const lh::DeviceId& id, const lh::InputReport& r) override {
+    std::string text;
+    char buf[64];
+    if (r.format == lh::InputFormat::Raw) {
+      text = "raw[" + std::to_string(r.raw.size()) + "]";
+      for (uint8_t b : r.raw) { std::snprintf(buf, sizeof buf, " %02x", b); text += buf; }
+    } else {
+      std::snprintf(buf, sizeof buf, "fmt%d", int(r.format));
+      text = buf;
+      if (r.hasButtons) { std::snprintf(buf, sizeof buf, " buttons=%02x", r.buttons); text += buf; }
+      if (r.hasTrigger) { std::snprintf(buf, sizeof buf, " trigger=%u", r.trigger); text += buf; }
+      if (r.hasAxes) { std::snprintf(buf, sizeof buf, " axes=%d,%d", r.axisX, r.axisY); text += buf; }
+      if (r.format == lh::InputFormat::Compact) { std::snprintf(buf, sizeof buf, " extra=%02x", r.extra); text += buf; }
+      if (r.hasExtended) {
+        text += " ext";
+        for (uint8_t b : r.extended) { std::snprintf(buf, sizeof buf, " %02x", b); text += buf; }
+      }
+    }
+    std::lock_guard lock(mutex);
+    ++counts[id];
+    auto& l = last[id];
+    if (l.text == text) return;
+    l.text = text;
+    std::printf("%12.4f %s %s\n", r.time, id.c_str(), text.c_str());
+    std::fflush(stdout);
+  }
+};
 
 struct StatsSink : lh::InputSinkBase {
   struct Dev {
@@ -400,6 +449,26 @@ int main(int argc, char** argv) {
     RunFor(argc >= 4 ? atof(argv[3]) : 0);
     t.Stop();
     stats.Print();
+    return 0;
+  }
+  if (cmd == "inputs" && argc >= 3) {
+    InputsSink sink;
+    if (std::string(argv[2]) == "live") {
+      lh::usb::UsbTransport t(&sink);
+      if (!t.Start()) return 1;
+      RunFor(argc >= 4 ? atof(argv[3]) : 10);
+      t.Stop();
+    } else {
+      lh::usb::RawCaptureReader r;
+      if (!r.Open(argv[2])) {
+        fprintf(stderr, "cannot read %s\n", argv[2]);
+        return 1;
+      }
+      lh::usb::ReportDecoder dec(&sink);
+      r.ReadAll([&](const lh::usb::EndpointInfo& e) { dec.AddEndpoint(e); },
+                [&](const lh::usb::RawReport& rep) { dec.OnReport(rep); });
+    }
+    for (const auto& [id, n] : sink.counts) printf("%s: %ld input reports\n", id.c_str(), n);
     return 0;
   }
   if (cmd == "stats" && argc >= 3) {

@@ -178,6 +178,8 @@ add_library(lh_runtime OBJECT
   src/runtime/mixed_light.cpp
   src/runtime/room_map.cpp
   src/runtime/index_input.cpp
+  src/runtime/mapped_input.cpp
+  src/runtime/model_scale.cpp
   src/runtime/device_tracker.cpp
   src/runtime/room_solver.cpp
   src/runtime/session.cpp)

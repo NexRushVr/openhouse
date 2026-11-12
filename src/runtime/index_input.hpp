@@ -15,6 +15,9 @@
 //   buttons bit 0 trigger click, 1 trackpad touch, 2 trackpad click, 3 system,
 //           bit 4 grip, bit 5 application menu
 //   trigger byte / 255; axes always the trackpad; no extended record
+// Mapped (any maker's "mapped input" firmware, e.g. Shiftall FlipVR): controller
+// sub-protocol 1 carries the input record as raw bytes; its layout is the device's
+// input profile ("input_components": bit_offset / bit_width), read by the driver.
 // Packets carry only the parts that changed, so the decoder keeps state.
 #pragma once
 

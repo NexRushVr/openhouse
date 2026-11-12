@@ -49,6 +49,8 @@ constexpr const char* kStockFile = "driver_lighthouse.so.stock";
 }  // namespace
 #include "lh/session.hpp"
 #include "hand_skeleton.hpp"
+#include "runtime/mapped_input.hpp"
+#include <nlohmann/json.hpp>
 #include "raw_alignment.hpp"
 #include "room_publisher.hpp"
 #include "telemetry_server.hpp"
@@ -150,6 +152,46 @@ void Log(lh::LogLevel level, const std::string& text, const std::string& serial 
     VRDriverLog()->Log(("lh: [" + std::string(lh::LogLevelName(level)) + "] " + text + "\n").c_str());
 }
 void Log(const std::string& text) { Log(lh::ClassifyLog(text), text); }
+
+// A driver resource ("{shiftall}/input/flipvr_controller_vc1b_profile.json") as text, ""
+// if SteamVR can't find it: another driver's resources (a resource-only driver such as
+// Shiftall's) resolve through SteamVR, not a path of ours.
+std::string ReadResource(const std::string& name) {
+  if (name.empty() || !VRResources()) return {};
+  char path[4096]{};
+  VRResources()->GetResourceFullPath(name.c_str(), "", path, sizeof path);
+  if (!*path) return {};
+  std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+  if (!in) return {};
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// A maker's status icons for a model, from its driver.vrresources "statusicons" (as the
+// stock driver shows a FlipVR with Shiftall's icons).
+std::vector<std::pair<ETrackedDeviceProperty, std::string>> StatusIcons(const std::string& root, const std::string& model) {
+  static const std::pair<const char*, ETrackedDeviceProperty> kProps[] = {
+      {"Prop_NamedIconPathDeviceOff_String", Prop_NamedIconPathDeviceOff_String},
+      {"Prop_NamedIconPathDeviceSearching_String", Prop_NamedIconPathDeviceSearching_String},
+      {"Prop_NamedIconPathDeviceSearchingAlert_String", Prop_NamedIconPathDeviceSearchingAlert_String},
+      {"Prop_NamedIconPathDeviceReady_String", Prop_NamedIconPathDeviceReady_String},
+      {"Prop_NamedIconPathDeviceReadyAlert_String", Prop_NamedIconPathDeviceReadyAlert_String},
+      {"Prop_NamedIconPathDeviceNotReady_String", Prop_NamedIconPathDeviceNotReady_String},
+      {"Prop_NamedIconPathDeviceStandby_String", Prop_NamedIconPathDeviceStandby_String},
+      {"Prop_NamedIconPathDeviceAlertLow_String", Prop_NamedIconPathDeviceAlertLow_String}};
+  std::vector<std::pair<ETrackedDeviceProperty, std::string>> out;
+  if (root.empty()) return out;
+  try {
+    const std::string text = ReadResource("{" + root + "}/driver.vrresources");
+    if (text.empty()) return out;
+    const auto j = nlohmann::json::parse(text, nullptr, true, true);
+    if (!j.contains("statusicons") || !j.at("statusicons").contains(model)) return out;
+    const auto& icons = j.at("statusicons").at(model);
+    for (const auto& [name, prop] : kProps)
+      if (icons.contains(name) && icons.at(name).is_string()) out.emplace_back(prop, icons.at(name).get<std::string>());
+  } catch (const std::exception&) {
+  }
+  return out;
+}
 
 // The process hosting the driver (vrserver, monado-service, wivrn-server, ...).
 std::string HostName();
@@ -474,6 +516,38 @@ class Device : public ITrackedDeviceServerDriver {
     switch (info_.role) {
       case lh::DeviceRole::Controller: {
         const bool left = info_.controllerRole == "left_hand";
+        if (info_.controllerType == lh::ControllerType::Mapped) {
+          // Another maker's controller (Shiftall FlipVR): its own resources, profile and
+          // render model, as its config names them; its inputs come from that profile.
+          LoadMappedProfile();
+          const std::string root = info_.resourceRoot;
+          props->SetStringProperty(c, Prop_ManufacturerName_String, info_.manufacturer.c_str());
+          props->SetStringProperty(c, Prop_ModelNumber_String, info_.model.c_str());
+          if (!root.empty()) props->SetStringProperty(c, Prop_ResourceRoot_String, root.c_str());
+          if (!mapped_.controllerType.empty())
+            props->SetStringProperty(c, Prop_ControllerType_String, mapped_.controllerType.c_str());
+          props->SetStringProperty(c, Prop_InputProfilePath_String, info_.inputProfile.c_str());
+          if (!info_.renderModel.empty()) props->SetStringProperty(c, Prop_RenderModelName_String, info_.renderModel.c_str());
+          const std::string registered =
+              !info_.registeredType.empty()
+                  ? info_.registeredType
+                  : (root.empty() ? std::string("lighthouse") : root) + "/" +
+                        (mapped_.controllerType.empty() ? std::string("controller") : mapped_.controllerType) + info_.serial;
+          props->SetStringProperty(c, Prop_RegisteredDeviceType_String, registered.c_str());
+          props->SetInt32Property(c, Prop_ControllerRoleHint_Int32,
+                                  left ? TrackedControllerRole_LeftHand
+                                       : info_.controllerRole == "right_hand" ? TrackedControllerRole_RightHand
+                                                                              : TrackedControllerRole_Invalid);
+          props->SetInt32Property(c, Prop_DeviceClass_Int32, TrackedDeviceClass_Controller);
+          props->SetInt32Property(c, Prop_ControllerHandSelectionPriority_Int32, NextHandPriority());
+          lastUse_ = std::chrono::steady_clock::now();
+          props->SetInt32Property(c, Prop_Axis0Type_Int32, k_eControllerAxis_Joystick);
+          props->SetInt32Property(c, Prop_Axis1Type_Int32, k_eControllerAxis_Trigger);
+          props->SetBoolProperty(c, Prop_DeviceProvidesBatteryStatus_Bool, true);
+          props->SetBoolProperty(c, Prop_Identifiable_Bool, true);
+          for (const auto& [prop, icon] : StatusIcons(root, info_.model)) props->SetStringProperty(c, prop, icon.c_str());
+          break;
+        }
         if (info_.controllerType == lh::ControllerType::ViveWand) {
           // As SteamVR's own wand: the htc resources (profile, render model, icons).
           props->SetStringProperty(c, Prop_ManufacturerName_String, info_.manufacturer.empty() ? "HTC" : info_.manufacturer.c_str());
@@ -659,6 +733,15 @@ class Device : public ITrackedDeviceServerDriver {
       in->CreateHapticComponent(c, "/output/haptic", &haptic_);
       return;
     }
+    if (info_.controllerType == lh::ControllerType::Mapped) CreateMappedInputs();
+    else CreateIndexInputs(b, s1, s2);
+    CreateSkeleton();
+  }
+
+  template <class B, class S1, class S2>
+  void CreateIndexInputs(B& b, S1& s1, S2& s2) {
+    auto* in = ComponentInput();
+    const PropertyContainerHandle_t c = container_;
     b(SystemClick, "/input/system/click");
     b(SystemTouch, "/input/system/touch");
     b(AClick, "/input/a/click");
@@ -684,6 +767,51 @@ class Device : public ITrackedDeviceServerDriver {
     s1(FingerRing, "/input/finger/ring");
     s1(FingerPinky, "/input/finger/pinky");
     in->CreateHapticComponent(c, "/output/haptic", &haptic_);
+  }
+
+  // The profile of a mapped controller (Shiftall FlipVR), for this hand.
+  void LoadMappedProfile() {
+    mapped_ = {};
+    const std::string text = ReadResource(info_.inputProfile);
+    std::string error;
+    if (text.empty()) {
+      error = "not found";
+    } else if (lh::runtime::ParseMappedProfile(text, info_.controllerRole, &mapped_, &error)) {
+      Log(info_.serial + ": mapped input profile " + info_.inputProfile + " (" + mapped_.controllerType + ", " +
+          std::to_string(mapped_.components.size()) + " components)");
+      return;
+    }
+    Log(info_.serial + ": mapped input profile " + info_.inputProfile + " unusable: " + error);
+    mapped_ = {};
+  }
+
+  // Every component the profile lays out, by its own path.
+  void CreateMappedInputs() {
+    auto* in = ComponentInput();
+    const PropertyContainerHandle_t c = container_;
+    mappedInputs_.clear();
+    for (const auto& m : mapped_.components) {
+      if (m.kind == lh::runtime::MappedComponent::Kind::Haptic) {
+        if (haptic_ == k_ulInvalidInputComponentHandle) in->CreateHapticComponent(c, m.path.c_str(), &haptic_);
+        continue;
+      }
+      MappedInput mi;
+      mi.component = &m;
+      const EVRInputError e =
+          m.kind == lh::runtime::MappedComponent::Kind::Bool
+              ? in->CreateBooleanComponent(c, m.path.c_str(), &mi.handle)
+              : in->CreateScalarComponent(c, m.path.c_str(), &mi.handle, VRScalarType_Absolute,
+                                          m.twoSided ? VRScalarUnits_NormalizedTwoSided : VRScalarUnits_NormalizedOneSided);
+      if (e != VRInputError_None) {
+        Log(info_.serial + ": creating " + m.path + " failed, error " + std::to_string(int(e)));
+        continue;
+      }
+      mappedInputs_.push_back(mi);
+    }
+  }
+
+  void CreateSkeleton() {
+    const PropertyContainerHandle_t c = container_;
     std::vector<std::string> paths;
     if (const char* p = std::getenv("LH_HAND_POSES")) paths.emplace_back(p);
     char resource[4096]{};
@@ -731,9 +859,14 @@ class Device : public ITrackedDeviceServerDriver {
     }
   }
 
-  void UpdateInputs(const lh::ControllerInput& s, double now) {
-    if (s.hostTime == lastInputTime_) return;
-    lastInputTime_ = s.hostTime;
+  void UpdateInputs(const lh::ControllerInput& raw, double now) {
+    if (raw.hostTime == lastInputTime_) return;
+    lastInputTime_ = raw.hostTime;
+    // A mapped controller's record, by name, for the hand skeleton and the in-use check.
+    lh::ControllerInput named = raw;
+    if (info_.controllerType == lh::ControllerType::Mapped)
+      lh::runtime::MappedToControllerInput(mapped_, raw.mapped, &named);
+    const lh::ControllerInput& s = named;
     if (active_ && info_.role == lh::DeviceRole::Controller &&
         (s.systemClick || s.aClick || s.bClick || s.triggerClick || s.thumbstickClick || s.trackpadClick ||
          s.gripClick || s.menuClick || s.trigger > 0.5)) {
@@ -773,6 +906,21 @@ class Device : public ITrackedDeviceServerDriver {
       last_[i] = values[i];
       sent_[i] = true;
     }
+    for (auto& m : mappedInputs_) {
+      // A neutral (disconnected) record is empty: everything released.
+      const double v = lh::runtime::MappedValue(s.mapped, *m.component).value_or(0.0);
+      if (m.sent && v == m.last) continue;
+      const EVRInputError e = m.component->kind == lh::runtime::MappedComponent::Kind::Bool
+                                  ? in->UpdateBooleanComponent(m.handle, v != 0, offset)
+                                  : in->UpdateScalarComponent(m.handle, float(v), offset);
+      if (e != VRInputError_None && m.failLogged < 5) {
+        ++m.failLogged;
+        Log(info_.serial + ": updating " + m.component->path + " value " + std::to_string(v) + " -> error " +
+            std::to_string(int(e)));
+      }
+      m.last = v;
+      m.sent = true;
+    }
   }
 
   Eigen::Isometry3d rawFromWorld_ = Eigen::Isometry3d::Identity();
@@ -810,6 +958,16 @@ class Device : public ITrackedDeviceServerDriver {
   double last_[InputCount] = {};
   bool sent_[InputCount] = {};
   VRInputComponentHandle_t haptic_ = k_ulInvalidInputComponentHandle;
+  // Mapped controllers (Shiftall FlipVR): the profile's components and their handles.
+  struct MappedInput {
+    const lh::runtime::MappedComponent* component = nullptr;
+    VRInputComponentHandle_t handle = k_ulInvalidInputComponentHandle;
+    double last = 0;
+    bool sent = false;
+    int failLogged = 0;
+  };
+  lh::runtime::MappedProfile mapped_;
+  std::vector<MappedInput> mappedInputs_;
   double lastInputTime_ = -1;
   double lastSkeletonSent_ = -1e300;
   lh::ControllerInput skeletonInput_;
