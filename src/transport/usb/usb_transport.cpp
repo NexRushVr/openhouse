@@ -187,19 +187,44 @@ std::optional<uint32_t> UsbTransport::ConnectedSerial(hid_device_* receiver) {
   return di.serial;
 }
 
-// #92: whether the device on an open receiver is no longer the one it was set up for. A dongle can be
+// #92: whether the device on a receiver is no longer the one it was set up for. A dongle can be
 // paired with several devices and serves whichever is on (one at a time), staying plugged in; it was
 // identified only when opened, so a 3.0 tracker switched on in place of a 2018 one was taken for it,
 // with the 2018's sensor layout. Asked only after a disconnect or a radio gap (Run asks again while
-// the receiver doesn't answer). 1: another device, 0: the same one, -1: no answer.
-int UsbTransport::OtherDeviceConnected(const Open& o) {
+// the receiver doesn't answer). Runs on the probe thread, on a second handle to the receiver: the
+// reader thread's handle stays its own. 1: another device, 0: the same one, -1: no answer.
+int UsbTransport::OtherDeviceConnected(const std::string& path, const std::string& serial, const std::string& receiver) {
+  hid_device* h = nullptr;
+  {
+    static std::mutex openMutex;  // hid_open_path's error string is process-wide (#49.5)
+    std::lock_guard openLock(openMutex);
+    h = hid_open_path(path.c_str());
+  }
+  if (!h) return -1;
   DeviceInfo di;
-  if (!QueryDeviceInfo(o.dev, &di, 2) || di.serial == 0) return -1;
+  const bool ok = QueryDeviceInfo(h, &di, 2) && di.serial != 0;
+  hid_close(h);
+  if (!ok) return -1;
   char sn[16];
   snprintf(sn, sizeof sn, "LHR-%08X", di.serial);
-  if (o.info.serial == sn) return 0;
-  Log(LogLevel::Info, "%s: receiver %s now has %s; reopening it to set that device up\n", o.info.serial.c_str(), o.receiver.c_str(), sn);
+  if (serial == sn) return 0;
+  Log(LogLevel::Info, "%s: receiver %s now has %s; reopening it to set that device up\n", serial.c_str(), receiver.c_str(), sn);
   return 1;
+}
+
+void UsbTransport::RunDeviceChecks() {
+  std::vector<std::shared_ptr<DeviceCheck>> checks;
+  {
+    std::lock_guard lock(hapticMutex_);
+    checks = deviceChecks_;
+  }
+  for (auto& c : checks) {
+    if (stop_) return;
+    const int result = OtherDeviceConnected(c->path, c->serial, c->receiver);
+    std::lock_guard lock(hapticMutex_);
+    c->result = result;
+    std::erase(deviceChecks_, c);
+  }
 }
 
 bool UsbTransport::QueryDeviceInfo(hid_device_* dev, DeviceInfo* info, int attempts) {
@@ -628,6 +653,7 @@ void UsbTransport::ProbeMain() {
       TakeRadioCommands(o);
       TakePairing(o);
     }
+    RunDeviceChecks();
   };
   while (!stop_) {
     Enumerate(false);
@@ -803,20 +829,34 @@ void UsbTransport::Run() {
           const uint8_t id = reps[i].buf[0];
           const bool data = id == 0x23 || id == 0x24;
           // A receiver that doesn't answer is asked again, every kDeviceRecheck for kDeviceCheck: the
-          // check without that missed a switch live. Each try can hold this thread ~0.1 s.
-          if (id == 0x26 || (data && o.lastData > 0 && reps[i].t - o.lastData > kRadioGap)) {
-            o.checkDevice = true;
-            o.checkUntil = reps[i].t + kDeviceCheck;
-            o.nextCheck = 0;
-          }
-          if (data && o.checkDevice && reps[i].t >= o.nextCheck) {
-            const int other = OtherDeviceConnected(o);
-            if (other >= 0 || reps[i].t > o.checkUntil) o.checkDevice = false;
-            else o.nextCheck = reps[i].t + kDeviceRecheck;
-            if (other == 1) {
-              o.disconnected = true;
-              break;
+          // check without that missed a switch live. The probe thread asks (RunDeviceChecks); this
+          // thread only queues the check and reads its answer, so it never waits on the receiver.
+          if (o.checkPending) {
+            std::optional<int> other;
+            {
+              std::lock_guard lock(hapticMutex_);
+              other = runningChecks_[o.path]->result;
             }
+            if (other) {
+              o.checkPending = false;
+              runningChecks_.erase(o.path);
+              if (*other >= 0 || reps[i].t > o.checkUntil) o.checkDevice = false;
+              else o.nextCheck = reps[i].t + kDeviceRecheck;
+              if (*other == 1) {
+                o.disconnected = true;
+                break;
+              }
+            }
+          }
+          if (data && o.checkDevice && !o.checkPending && reps[i].t >= o.nextCheck) {
+            auto check = std::make_shared<DeviceCheck>();
+            check->path = o.path;
+            check->serial = o.info.serial;
+            check->receiver = o.receiver;
+            runningChecks_[o.path] = check;
+            o.checkPending = true;
+            std::lock_guard lock(hapticMutex_);
+            deviceChecks_.push_back(check);
           }
           if (data) o.lastData = reps[i].t;
         }
