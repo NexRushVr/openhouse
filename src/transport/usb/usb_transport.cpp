@@ -831,6 +831,16 @@ void UsbTransport::Run() {
           // A receiver that doesn't answer is asked again, every kDeviceRecheck for kDeviceCheck: the
           // check without that missed a switch live. The probe thread asks (RunDeviceChecks); this
           // thread only queues the check and reads its answer, so it never waits on the receiver.
+          if (id == 0x26 || (data && o.lastData > 0 && reps[i].t - o.lastData > kRadioGap)) {
+            o.checkDevice = true;
+            o.checkUntil = reps[i].t + kDeviceCheck;
+            o.nextCheck = 0;
+            // An answer asked for before this may be about the device that was there before.
+            if (o.checkPending) {
+              o.checkPending = false;
+              runningChecks_.erase(o.path);
+            }
+          }
           if (o.checkPending) {
             std::optional<int> other;
             {
