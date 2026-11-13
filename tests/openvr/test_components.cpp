@@ -13,6 +13,7 @@
 #include "openvr/host_frame.hpp"
 #include "openvr/haptic_routing.hpp"
 #include "openvr/telemetry_server.hpp"
+#include "openvr/watchdog.hpp"
 #include "common/net.hpp"
 #include "lh/log_level.hpp"
 #include <chrono>
@@ -529,6 +530,7 @@ TEST(SteamRooms, WritesOurUniverseAndLeavesSteamVRsAlone) {
 
   std::ifstream in(path);
   const auto j = nlohmann::json::parse(in);
+  in.close();  // Windows can't remove an open file
   ASSERT_EQ(j.at("known_universes").size(), 2u);
   EXPECT_EQ(j.at("known_universes")[0], nlohmann::json::parse(steamUniverse));
   EXPECT_EQ(j.at("revision"), 6);
@@ -560,4 +562,18 @@ TEST(SteamRooms, ReadsChaperoneUniverses) {
   EXPECT_EQ(lh::openvr::ChaperoneUniverses(path), (std::set<std::string>{"1770781428", "42"}));
   std::filesystem::remove(path);
   EXPECT_TRUE(lh::openvr::ChaperoneUniverses(path).empty());
+}
+
+// #91: a tracker or controller on a charging cable shows up on USB while off, so plugging it in doesn't
+// start SteamVR; a headset (the Bigscreen Beyond is the same 28de:2300 as a Vive tracker) or a device SteamVR
+// has no config for does. Configs as SteamVR caches them (config/lighthouse/<serial>/config.json).
+TEST(Watchdog, APluggedInTrackerOrControllerIsCharging) {
+  using lh::openvr::WiredPlugInWakes;
+  EXPECT_FALSE(WiredPlugInWakes(R"({"device_class": "generic_tracker", "model_number": "VIVE Tracker 3.0 MV"})"));
+  EXPECT_FALSE(WiredPlugInWakes(R"({"device_class": "controller", "model_number": "Knuckles Left"})"));
+  EXPECT_TRUE(WiredPlugInWakes(R"({"manufacturer": "Bigscreen", "model_number": "Beyond", "device_class": "hmd"})"));
+  EXPECT_TRUE(WiredPlugInWakes(""));                         // never seen by SteamVR
+  EXPECT_TRUE(WiredPlugInWakes("{not json"));                // unreadable
+  EXPECT_TRUE(WiredPlugInWakes(R"({"model_number": "x"})"));  // no class
+  EXPECT_TRUE(WiredPlugInWakes(R"({"device_class": 3})"));
 }
