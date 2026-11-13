@@ -1,0 +1,94 @@
+# Builds the Linux driver, the Windows driver (MinGW cross-build) and the lhbs base
+# station firmware on every push and pull request, with the same scripts as a release
+# (scripts/build-*.sh), and uploads each package as a workflow artifact.
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # OpenVR's public headers (MIT), fetched at build time, never stored in the repo.
+  OPENVR_TAG: v2.15.6
+  VCPKG_MAX_CONCURRENCY: 4
+  # vcpkg's built packages, reused between runs (actions/cache below).
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-cache
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config libudev-dev libglfw3-dev libgl-dev patchelf
+      - name: OpenVR headers
+        run: |
+          git clone --depth 1 --branch "$OPENVR_TAG" https://github.com/ValveSoftware/openvr.git "$RUNNER_TEMP/openvr"
+          sudo mkdir -p /usr/include/openvr /usr/share/licenses/openvr
+          sudo cp "$RUNNER_TEMP"/openvr/headers/*.h /usr/include/openvr/
+          sudo cp "$RUNNER_TEMP/openvr/LICENSE" /usr/share/licenses/openvr/
+      - run: mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+      - uses: actions/cache@v4
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-linux-${{ hashFiles('vcpkg.json', 'cmake/triplets/*') }}
+          restore-keys: vcpkg-linux-
+      - name: Build and package
+        run: scripts/build-linux.sh
+      - name: Tests
+        run: ctest --test-dir build-release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openhouse-driver-linux
+          path: dist/openhouse-driver-linux.tar.gz
+          if-no-files-found: error
+
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config mingw-w64
+          # std::thread needs MinGW's posix thread model (Ubuntu defaults to win32).
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+      - name: OpenVR headers
+        run: |
+          git clone --depth 1 --branch "$OPENVR_TAG" https://github.com/ValveSoftware/openvr.git "$RUNNER_TEMP/openvr"
+          sudo mkdir -p /usr/include/openvr /usr/share/licenses/openvr
+          sudo cp "$RUNNER_TEMP"/openvr/headers/*.h /usr/include/openvr/
+          sudo cp "$RUNNER_TEMP/openvr/LICENSE" /usr/share/licenses/openvr/
+      - run: mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+      - uses: actions/cache@v4
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-mingw-${{ hashFiles('vcpkg.json', 'cmake/triplets/*') }}
+          restore-keys: vcpkg-mingw-
+      - name: Build and package
+        run: scripts/build-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openhouse-windows-x64
+          path: dist/openhouse-windows-x64.zip
+          if-no-files-found: error
+
+  firmware:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Build, host test and package
+        run: scripts/build-firmware.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openhouse-basestation-firmware
+          path: dist/openhouse-basestation-firmware.zip
+          if-no-files-found: error
